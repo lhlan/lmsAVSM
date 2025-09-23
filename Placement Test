@@ -1,0 +1,203 @@
+// === 1. Shortcode hiển thị form ===
+function ld_student_form_shortcode() {
+    ob_start();
+    ?>
+		<style>
+        /* Style form học viên */
+        #ld-user-form {
+            max-width: 450px;
+            margin: 0 auto;
+            padding: 25px;
+            border: 1px solid #ddd;
+            border-radius: 12px;
+            background: #f9fafb;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        }
+        #ld-user-form h3 {
+            text-align: center;
+            margin-bottom: 20px;
+            font-size: 20px;
+            color: #1e293b;
+        }
+        #ld-user-form label {
+            display: block;
+            margin-bottom: 6px;
+            font-weight: 600;
+            color: #334155;
+        }
+        #ld-user-form input {
+            width: 100%;
+            padding: 10px 12px;
+            margin-bottom: 15px;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.2s ease;
+        }
+        #ld-user-form input:focus {
+            border-color: #38bdf8;
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(56,189,248,0.3);
+        }
+        #ld-user-form button {
+            width: 100%;
+            padding: 12px;
+            background: #0ea5e9;
+            border: none;
+            color: white;
+            font-size: 15px;
+            font-weight: bold;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.3s ease;
+        }
+        #ld-user-form button:hover {
+            background: #0284c7;
+        }
+		.readonly-input {
+    		background-color: #f5f5f5;
+    		cursor: not-allowed;
+		}
+    </style>
+    <form id="student-form" style="max-width:400px;margin:20px auto;padding:20px;border:1px solid #ccc;border-radius:8px;">
+        <label>Họ tên</label>
+        <input type="text" id="name" name="name" required style="width:100%;margin-bottom:10px;padding:8px;">
+
+        <label>Email</label>
+        <input type="email" id="email" name="email" required style="width:100%;margin-bottom:10px;padding:8px;">
+
+        <label>Số điện thoại</label>
+        <input type="text" id="mobiphone" name="mobiphone" required style="width:100%;margin-bottom:10px;padding:8px;">
+
+        <input type="hidden" id="score" name="score" value="0">
+        <input type="hidden" id="quiz_id" name="quiz_id" value="2011"> <!-- Quiz ID LearnDash -->
+
+        <button type="submit" style="background:#0073aa;color:#fff;border:none;padding:10px 20px;border-radius:5px;">
+            Bắt đầu làm bài
+        </button>
+    </form>
+
+    <div id="quiz-container" style="display:none;">
+        <?php echo do_shortcode('[ld_quiz quiz_id="2011"]'); ?>
+    </div>
+
+    <div id="quiz-result" style="display:none;padding:15px;background:#e9ffe9;border:1px solid #8bc34a;margin-top:15px;"></div>
+
+    <script>
+    jQuery(document).ready(function($){
+        $('#student-form').on('submit', function(e){
+            e.preventDefault();
+
+            let data = {
+                name: $('#name').val(),
+                email: $('#email').val(),
+                mobiphone: $('#mobiphone').val(),
+                score: $('#points').val(), // sẽ cập nhật sau khi quiz xong
+                quiz_id: $('#quiz_id').val(),
+                _wpnonce: "<?php echo wp_create_nonce('ld_quiz_nonce'); ?>"
+            };
+
+            $.ajax({
+                url: "<?php echo esc_url( rest_url('quiz/v1/save') ); ?>",
+                type: "POST",
+                contentType: "application/json",
+                data: JSON.stringify(data),
+                success: function(res){
+                    if(res.success){
+                        $('#student-form').show();
+						$('#name').show().prop('readonly', true).addClass('readonly-input');
+						$('#email').show().prop('readonly', true).addClass('readonly-input');
+						$('#mobiphone').show().prop('readonly', true).addClass('readonly-input');						
+                        $('#quiz-container').show();
+                    } else {
+                        alert("Lỗi: " + res.message);
+                    }
+                },
+                error: function(err){
+                    alert("Có lỗi xảy ra khi lưu thông tin học viên.");
+                }
+            });
+        });
+
+        // Fake hook điểm số (cần gắn với JS của LearnDash quiz submit)
+        add_action('learndash_quiz_completed', 'handle_quiz_completed', 10, 2);
+        document.addEventListener("learndash_quiz_completed", function(e){
+            let qscore = e.detail.points; // điểm quiz từ sự kiện giả lập
+            $('#score').val(qscore);
+
+            let data = {
+                name: $('#name').val(),
+                email: $('#email').val(),
+                mobiphone: $('#mobiphone').val(),
+                score: $('#points').val(),
+                quiz_id: $('#quiz_id').val(),
+                _wpnonce: "<?php echo wp_create_nonce('ld_quiz_nonce'); ?>"
+            };
+
+            $.ajax({
+                url: "<?php echo esc_url( rest_url('quiz/v1/save') ); ?>",
+                type: "POST",
+                contentType: "application/json",
+                data: JSON.stringify(data),
+                success: function(res){
+                    if(res.success){
+                        $('#quiz-container').hide();
+                        $('#quiz-result').show().html(
+                            "<h3>Kết quả</h3>" +
+                            "<p>Họ tên: " + data.name + "</p>" +
+                            "<p>Email: " + data.email + "</p>" +
+                            "<p>SĐT: " + data.mobiphone + "</p>" +
+                            "<p>Điểm số: " + data.score + "</p>"
+                        );
+                    }
+                }
+            });
+        });
+    });
+    </script>
+    <?php
+    return ob_get_clean();
+}
+add_shortcode('ld_quiz_form', 'ld_student_form_shortcode');
+
+
+// === 2. Đăng ký REST API ===
+add_action('rest_api_init', function () {
+    register_rest_route('quiz/v1', '/save', array(
+        'methods' => 'POST',
+        'callback' => 'save_student_to_sheet',
+        'permission_callback' => '__return_true'
+    ));
+});
+
+function save_student_to_sheet($request) {
+    $nonce = $request->get_param('_wpnonce');
+    if ( ! wp_verify_nonce($nonce, 'ld_quiz_nonce') ) {
+        return array('success' => false, 'message' => 'Nonce không hợp lệ');
+    }
+
+    $name  = sanitize_text_field($request['name']);
+    $email = sanitize_email($request['email']);
+    $mobiphone = sanitize_text_field($request['mobiphone']);
+    $score = sanitize_text_field($request['score']);
+    $quiz_id = intval($request['quiz_id']);
+
+    // Google Apps Script URL
+    $script_url = "https://script.google.com/macros/s/AKfycbzysvZDAYwmDzjbaolDmWBNVlRrqnlYke9sTyOGeKXDDNYhTzjaknUqkBNQ7KL5Ka5C/exec";
+
+    $response = wp_remote_post($script_url, array(
+        'body' => array(
+            'name'   => $name,
+            'email'  => $email,
+            'mobiphone'  => $mobiphone,
+            'score'  => $score,
+            'quiz_id'=> $quiz_id
+        )
+    ));
+
+    if (is_wp_error($response)) {
+        return array('success' => false, 'message' => 'Không gửi được Google Sheets: ' . $response->get_error_message());
+    }
+
+    return array('success' => true, 'message' => 'Đã lưu học viên');
+}
