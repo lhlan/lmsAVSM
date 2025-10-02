@@ -76,45 +76,79 @@ function save_quiz_user_info() {
 // ==========================
 add_action('learndash_quiz_completed', 'my_quiz_completed_handler', 10, 2);
 
-function my_quiz_completed_handler($quiz_data, $current_user) {
-    $quiz_id    = $quiz_data['quiz']->ID;
-    $score      = $quiz_data['score'];
-    $percentage = $quiz_data['percentage'];
-    $passed     = $quiz_data['pass'];
-    $user_id    = $current_user ? $current_user->ID : 0;
+function my_quiz_completed_handler($quiz_data, $current_user = null) {
+    // Trace hook firing for diagnostics
+    error_log('[LD] learndash_quiz_completed fired');
+    // Safely extract quiz and user details from LearnDash hook payload
+    $quiz_id = 0;
+    if (isset($quiz_data['quiz'])) {
+        $quiz_value = $quiz_data['quiz'];
+        $quiz_id = (is_object($quiz_value) && isset($quiz_value->ID)) ? intval($quiz_value->ID) : intval($quiz_value);
+    }
+
+    $score      = isset($quiz_data['score']) ? $quiz_data['score'] : 0;
+    $percentage = isset($quiz_data['percentage']) ? $quiz_data['percentage'] : 0;
+    $passed     = !empty($quiz_data['pass']) ? (int) $quiz_data['pass'] : 0;
+
+    $user_id = 0;
+    if (is_object($current_user) && isset($current_user->ID)) {
+        $user_id = intval($current_user->ID);
+    } elseif (!empty($quiz_data['user']) && is_object($quiz_data['user']) && isset($quiz_data['user']->ID)) {
+        $user_id = intval($quiz_data['user']->ID);
+    } else {
+        $user_id = get_current_user_id();
+    }
 
     // Retrieve stored info
     $user_name  = isset($_SESSION['quiz_user_name']) ? $_SESSION['quiz_user_name'] : '';
     $user_email = isset($_SESSION['quiz_user_email']) ? $_SESSION['quiz_user_email'] : '';
     $user_phone = isset($_SESSION['quiz_user_phone']) ? $_SESSION['quiz_user_phone'] : '';
 
+    // Fallback to WP user info if session fields are empty
+    if (($user_name === '' || $user_email === '') && $user_id) {
+        $wp_user = get_userdata($user_id);
+        if ($wp_user) {
+            if ($user_name === '') {
+                $user_name = $wp_user->display_name;
+            }
+            if ($user_email === '') {
+                $user_email = $wp_user->user_email;
+            }
+        }
+    }
+
     $data = array(
-        
-		'quiz_id'    => $quiz_id,
+        'quiz_id'    => $quiz_id,
         'score'      => $score,
         'percentage' => $percentage,
         'passed'     => $passed,
         'user_id'    => $user_id,
         'user_name'  => $user_name,
         'user_email' => $user_email,
-        'user_phone' => $user_phone,        
+        'user_phone' => $user_phone,
     );
 
+    // Log minimal payload without PII
+    error_log('[LD] Sending to GAS: quiz_id=' . $quiz_id . ', user_id=' . $user_id . ', score=' . $score . ', percentage=' . $percentage . ', passed=' . $passed);
+
     my_send_to_gsheet($data);
+
+    // Clear session data after sending to avoid duplicate submissions
+    unset($_SESSION['quiz_user_name'], $_SESSION['quiz_user_email'], $_SESSION['quiz_user_phone']);
 }
 
 // ==========================
 // 5. Send Data to Google Sheets
 // ==========================
 function my_send_to_gsheet($data) {
-    $url = "https://script.google.com/macros/s/AKfycbyWZ_WWGRieWywpTweI5alSYRQGskk_OmIfGGAbEU3lsU75F5Z88Ro4hNDH8wvAjFki1A/exec"; // REPLACE THIS
+    // Use the same endpoint verified via Postman
+    $url = "https://script.google.com/macros/s/AKfycbzysvZDAYwmDzjbaolDmWBNVlRrqnlYke9sTyOGeKXDDNYhTzjaknUqkBNQ7KL5Ka5C/exec"; // TODO: move to option/settings
 
+    // Send as form-encoded fields so Google Apps Script can read via e.parameter
     $args = [
-        'body'        => json_encode($data), // force raw JSON
-        'headers'     => ['Content-Type' => 'application/json; charset=utf-8'],
-        'method'      => 'POST',
-        'data_format' => 'body',
-        'timeout'     => 20,
+        'body'    => $data,
+        'method'  => 'POST',
+        'timeout' => 20,
     ];
 
     $response = wp_remote_post($url, $args);
@@ -123,6 +157,8 @@ function my_send_to_gsheet($data) {
     if (is_wp_error($response)) {
         error_log('GSheet error: ' . $response->get_error_message());
     } else {
-        error_log('GSheet response: ' . wp_remote_retrieve_body($response));
+        $code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        error_log('GSheet response code: ' . $code . ' body: ' . $body);
     }
 }
