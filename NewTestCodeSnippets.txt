@@ -44,13 +44,31 @@ add_shortcode('quiz_with_user_info', function($atts) {
             headers: { "Content-Type": "application/x-www-form-urlencoded" },
             body: new URLSearchParams({
                 action: "save_quiz_user_info",
+                quiz_id: "<?php echo esc_attr($atts['quiz_id']); ?>",
                 user_name: formData.get("user_name"),
                 user_email: formData.get("user_email"),
                 user_phone: formData.get("user_phone")
             })
-        }).then(res => res.json()).then(() => {
+        }).then(res => res.json()).then((data) => {
+            console.log('User info saved:', data);
             form.style.display = "none";
             document.getElementById("quiz-container").style.display = "block";
+        }).catch(error => {
+            console.error('Error saving user info:', error);
+            alert('Error saving your information. Please try again.');
+        });
+    });
+
+    // Add quiz completion listener for debugging
+    document.addEventListener('DOMContentLoaded', function() {
+        // Listen for LearnDash quiz events
+        jQuery(document).on('learndash_quiz_completed', function(event, data) {
+            console.log('LearnDash quiz completed:', data);
+        });
+        
+        // Listen for any quiz-related events
+        jQuery(document).on('quiz_completed', function(event, data) {
+            console.log('Quiz completed event:', data);
         });
     });
     </script>
@@ -65,64 +83,250 @@ add_action('wp_ajax_nopriv_save_quiz_user_info', 'save_quiz_user_info');
 add_action('wp_ajax_save_quiz_user_info', 'save_quiz_user_info');
 
 function save_quiz_user_info() {
-    $_SESSION['quiz_user_name']  = sanitize_text_field($_POST['user_name']);
-    $_SESSION['quiz_user_email'] = sanitize_email($_POST['user_email']);
-    $_SESSION['quiz_user_phone'] = sanitize_text_field($_POST['user_phone']);
+    $quiz_id = sanitize_text_field($_POST['quiz_id']);
+    $user_name = sanitize_text_field($_POST['user_name']);
+    $user_email = sanitize_email($_POST['user_email']);
+    $user_phone = sanitize_text_field($_POST['user_phone']);
+    
+    // Store in session with quiz_id as key for better organization
+    $_SESSION['quiz_user_data'][$quiz_id] = array(
+        'user_name' => $user_name,
+        'user_email' => $user_email,
+        'user_phone' => $user_phone,
+        'timestamp' => current_time('mysql')
+    );
+    
+    // Also store in WordPress options as backup (for non-logged-in users)
+    $backup_key = 'quiz_user_' . $quiz_id . '_' . wp_generate_uuid4();
+    update_option($backup_key, array(
+        'quiz_id' => $quiz_id,
+        'user_name' => $user_name,
+        'user_email' => $user_email,
+        'user_phone' => $user_phone,
+        'timestamp' => current_time('mysql')
+    ), false);
+    
     wp_send_json_success("Saved");
 }
+}
+// ==========================
+// 4. Quiz Completion Hooks (Multiple hooks for better reliability)
+// ==========================
 
-// ==========================
-// 4. Quiz Completion Hook
-// ==========================
+// Hook 1: LearnDash quiz completed
 add_action('learndash_quiz_completed', 'my_quiz_completed_handler', 10, 2);
 
+// Hook 2: LearnDash quiz submitted (alternative hook)
+add_action('learndash_quiz_submitted', 'my_quiz_submitted_handler', 10, 2);
+
+// Hook 3: WordPress action after quiz completion
+add_action('wp_ajax_nopriv_learndash_quiz_completed', 'my_quiz_completed_handler_ajax');
+add_action('wp_ajax_learndash_quiz_completed', 'my_quiz_completed_handler_ajax');
+
 function my_quiz_completed_handler($quiz_data, $current_user) {
+    error_log('Quiz completed hook fired - Quiz ID: ' . $quiz_data['quiz']->ID);
+    process_quiz_data($quiz_data, $current_user);
+}
+
+function my_quiz_submitted_handler($quiz_data, $current_user) {
+    error_log('Quiz submitted hook fired - Quiz ID: ' . $quiz_data['quiz']->ID);
+    process_quiz_data($quiz_data, $current_user);
+}
+
+function my_quiz_completed_handler_ajax() {
+    // Handle AJAX quiz completion
+    $quiz_id = intval($_POST['quiz_id']);
+    $score = floatval($_POST['score']);
+    $percentage = floatval($_POST['percentage']);
+    $passed = $_POST['passed'] === 'true';
+    $user_id = get_current_user_id();
+    
+    $quiz_data = array(
+        'quiz' => (object) array('ID' => $quiz_id),
+        'score' => $score,
+        'percentage' => $percentage,
+        'pass' => $passed
+    );
+    
+    $current_user = $user_id ? get_user_by('id', $user_id) : null;
+    
+    process_quiz_data($quiz_data, $current_user);
+}
+
+function process_quiz_data($quiz_data, $current_user) {
     $quiz_id    = $quiz_data['quiz']->ID;
-    $score      = $quiz_data['score'];
-    $percentage = $quiz_data['percentage'];
-    $passed     = $quiz_data['pass'];
+    $score      = floatval($quiz_data['score']);
+    $percentage = floatval($quiz_data['percentage']);
+    $passed     = (bool) $quiz_data['pass'];
     $user_id    = $current_user ? $current_user->ID : 0;
 
-    // Retrieve stored info
-    $user_name  = isset($_SESSION['quiz_user_name']) ? $_SESSION['quiz_user_name'] : '';
-    $user_email = isset($_SESSION['quiz_user_email']) ? $_SESSION['quiz_user_email'] : '';
-    $user_phone = isset($_SESSION['quiz_user_phone']) ? $_SESSION['quiz_user_phone'] : '';
+    error_log('Processing quiz data - Quiz ID: ' . $quiz_id . ', Score: ' . $score . ', Percentage: ' . $percentage);
+
+    // Retrieve stored info from session
+    $user_data = null;
+    if (isset($_SESSION['quiz_user_data'][$quiz_id])) {
+        $user_data = $_SESSION['quiz_user_data'][$quiz_id];
+    } else {
+        // Try to find backup data in options
+        $options = wp_load_alloptions();
+        foreach ($options as $key => $value) {
+            if (strpos($key, 'quiz_user_' . $quiz_id . '_') === 0) {
+                $user_data = maybe_unserialize($value);
+                break;
+            }
+        }
+    }
+
+    $user_name  = $user_data ? $user_data['user_name'] : '';
+    $user_email = $user_data ? $user_data['user_email'] : '';
+    $user_phone = $user_data ? $user_data['user_phone'] : '';
+
+    // If no user data found, try to get from current user
+    if (empty($user_name) && $current_user) {
+        $user_name = $current_user->display_name;
+        $user_email = $current_user->user_email;
+    }
 
     $data = array(
-        
-		'quiz_id'    => $quiz_id,
+        'quiz_id'    => $quiz_id,
         'score'      => $score,
         'percentage' => $percentage,
         'passed'     => $passed,
         'user_id'    => $user_id,
         'user_name'  => $user_name,
         'user_email' => $user_email,
-        'user_phone' => $user_phone,        
+        'user_phone' => $user_phone,
+        'timestamp'  => current_time('mysql')
     );
-
+    error_log('Sending data to Google Sheets: ' . json_encode($data));
     my_send_to_gsheet($data);
 }
-
-// ==========================
+}// ==========================
 // 5. Send Data to Google Sheets
 // ==========================
 function my_send_to_gsheet($data) {
     $url = "https://script.google.com/macros/s/AKfycbyWZ_WWGRieWywpTweI5alSYRQGskk_OmIfGGAbEU3lsU75F5Z88Ro4hNDH8wvAjFki1A/exec"; // REPLACE THIS
 
+    // Ensure data types match what Apps Script expects
+    $formatted_data = array(
+        'quiz_id'    => intval($data['quiz_id']),
+        'score'      => floatval($data['score']),
+        'percentage' => floatval($data['percentage']),
+        'passed'     => (bool) $data['passed'],
+        'user_id'    => intval($data['user_id']),
+        'user_name'  => sanitize_text_field($data['user_name']),
+        'user_email' => sanitize_email($data['user_email']),
+        'user_phone' => sanitize_text_field($data['user_phone']),
+        'timestamp'  => sanitize_text_field($data['timestamp'])
+    );
+
     $args = [
-        'body'        => json_encode($data), // force raw JSON
-        'headers'     => ['Content-Type' => 'application/json; charset=utf-8'],
+        'body'        => json_encode($formatted_data),
+        'headers'     => [
+            'Content-Type' => 'application/json; charset=utf-8',
+            'User-Agent' => 'WordPress/' . get_bloginfo('version')
+        ],
         'method'      => 'POST',
         'data_format' => 'body',
-        'timeout'     => 20,
+        'timeout'     => 30,
+        'sslverify'   => true,
+        'redirection' => 5
     ];
 
-    $response = wp_remote_post($url, $args);
-
-    // Debug log
-    if (is_wp_error($response)) {
-        error_log('GSheet error: ' . $response->get_error_message());
-    } else {
-        error_log('GSheet response: ' . wp_remote_retrieve_body($response));
+    // Try up to 3 times with exponential backoff
+    $max_retries = 3;
+    $retry_count = 0;
+    
+    while ($retry_count < $max_retries) {
+        $response = wp_remote_post($url, $args);
+        
+        if (is_wp_error($response)) {
+            $retry_count++;
+            error_log('GSheet attempt ' . $retry_count . ' failed: ' . $response->get_error_message());
+            
+            if ($retry_count < $max_retries) {
+                sleep(pow(2, $retry_count)); // Exponential backoff
+                continue;
+            } else {
+                error_log('GSheet final error after ' . $max_retries . ' attempts: ' . $response->get_error_message());
+                return false;
+            }
+        } else {
+            $response_code = wp_remote_retrieve_response_code($response);
+            $response_body = wp_remote_retrieve_body($response);
+            
+            error_log('GSheet response code: ' . $response_code);
+            error_log('GSheet response body: ' . $response_body);
+            
+            if ($response_code >= 200 && $response_code < 300) {
+                error_log('GSheet data sent successfully');
+                return true;
+            } else {
+                $retry_count++;
+                error_log('GSheet HTTP error ' . $response_code . ' on attempt ' . $retry_count);
+                
+                if ($retry_count < $max_retries) {
+                    sleep(pow(2, $retry_count));
+                    continue;
+                } else {
+                    error_log('GSheet final HTTP error after ' . $max_retries . ' attempts');
+                    return false;
+                }
+            }
+        }
     }
+    
+    return false;
+}
+
+// ==========================
+// 6. Additional Debugging and Fallback Functions
+// ==========================
+
+// Add a manual trigger for testing
+add_action('wp_ajax_test_quiz_export', 'test_quiz_export');
+add_action('wp_ajax_nopriv_test_quiz_export', 'test_quiz_export');
+
+function test_quiz_export() {
+    $test_data = array(
+        'quiz_id'    => 2011,
+        'score'      => 8.0,
+        'percentage' => 80.0,
+        'passed'     => true,
+        'user_id'    => 0,
+        'user_name'  => 'Test User',
+        'user_email' => 'test@example.com',
+        'user_phone' => '+123456789',
+        'timestamp'  => current_time('mysql')
+    );
+    
+    error_log('Testing quiz export with data: ' . json_encode($test_data));
+    $result = my_send_to_gsheet($test_data);
+    
+    wp_send_json(array(
+        'success' => $result,
+        'data' => $test_data
+    ));
+}
+
+// Add a cleanup function for old backup data
+add_action('wp_scheduled_delete', 'cleanup_old_quiz_data');
+
+function cleanup_old_quiz_data() {
+    $options = wp_load_alloptions();
+    $cutoff_time = strtotime('-24 hours');
+    
+    foreach ($options as $key => $value) {
+        if (strpos($key, 'quiz_user_') === 0) {
+            $data = maybe_unserialize($value);
+            if (isset($data['timestamp']) && strtotime($data['timestamp']) < $cutoff_time) {
+                delete_option($key);
+            }
+        }
+    }
+}
+
+// Schedule cleanup if not already scheduled
+if (!wp_next_scheduled('wp_scheduled_delete')) {
+    wp_schedule_event(time(), 'hourly', 'wp_scheduled_delete');
 }
