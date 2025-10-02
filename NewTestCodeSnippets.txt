@@ -75,30 +75,62 @@ function save_quiz_user_info() {
 // 4. Quiz Completion Hook
 // ==========================
 add_action('learndash_quiz_completed', 'my_quiz_completed_handler', 10, 2);
+// Cover alternate LearnDash/ProQuiz event name on some installs
+add_action('learndash_pro_quiz_completed', 'my_quiz_completed_handler', 10, 2);
 
 function my_quiz_completed_handler($quiz_data, $current_user) {
-    $quiz_id    = $quiz_data['quiz']->ID;
-    $score      = $quiz_data['score'];
-    $percentage = $quiz_data['percentage'];
-    $passed     = $quiz_data['pass'];
-    $user_id    = $current_user ? $current_user->ID : 0;
+    // Deduplicate across multiple similar hooks firing quickly
+    $maybe_quiz_id_for_key = 0;
+    if (isset($quiz_data['quiz']) && is_object($quiz_data['quiz']) && isset($quiz_data['quiz']->ID)) {
+        $maybe_quiz_id_for_key = (int) $quiz_data['quiz']->ID;
+    } elseif (isset($quiz_data['quiz_id'])) {
+        $maybe_quiz_id_for_key = (int) $quiz_data['quiz_id'];
+    }
+    $maybe_user_id_for_key = ($current_user && isset($current_user->ID)) ? (int) $current_user->ID : 0;
+    $dedupe_key = 'newtest_gsheet_sent_' . $maybe_user_id_for_key . '_' . $maybe_quiz_id_for_key;
+    if (get_transient($dedupe_key)) {
+        return; // already sent recently
+    }
+    set_transient($dedupe_key, 1, 60);
+    // Normalize LearnDash quiz payload (compatible across LD/ProQuiz structures)
+    $quiz_id    = 0;
+    if (isset($quiz_data['quiz']) && is_object($quiz_data['quiz']) && isset($quiz_data['quiz']->ID)) {
+        $quiz_id = (int) $quiz_data['quiz']->ID;
+    } elseif (isset($quiz_data['quiz_id'])) {
+        $quiz_id = (int) $quiz_data['quiz_id'];
+    }
 
-    // Retrieve stored info
-    $user_name  = isset($_SESSION['quiz_user_name']) ? $_SESSION['quiz_user_name'] : '';
-    $user_email = isset($_SESSION['quiz_user_email']) ? $_SESSION['quiz_user_email'] : '';
-    $user_phone = isset($_SESSION['quiz_user_phone']) ? $_SESSION['quiz_user_phone'] : '';
+    $score      = isset($quiz_data['score']) ? $quiz_data['score'] : (isset($quiz_data['points']) ? $quiz_data['points'] : null);
+    $percentage = isset($quiz_data['percentage']) ? $quiz_data['percentage'] : (isset($quiz_data['percent']) ? $quiz_data['percent'] : null);
+    $passed     = null;
+    if (isset($quiz_data['pass'])) {
+        $passed = (int) $quiz_data['pass'];
+    } elseif (isset($quiz_data['passed'])) {
+        $passed = (int) $quiz_data['passed'];
+    }
+
+    $user_id = ($current_user && isset($current_user->ID)) ? (int) $current_user->ID : 0;
+
+    // Retrieve stored info from session (prefilled form)
+    $user_name  = isset($_SESSION['quiz_user_name']) ? sanitize_text_field($_SESSION['quiz_user_name']) : '';
+    $user_email = isset($_SESSION['quiz_user_email']) ? sanitize_email($_SESSION['quiz_user_email']) : '';
+    $user_phone = isset($_SESSION['quiz_user_phone']) ? sanitize_text_field($_SESSION['quiz_user_phone']) : '';
 
     $data = array(
-        
-		'quiz_id'    => $quiz_id,
+        'quiz_id'    => $quiz_id,
         'score'      => $score,
         'percentage' => $percentage,
         'passed'     => $passed,
         'user_id'    => $user_id,
         'user_name'  => $user_name,
         'user_email' => $user_email,
-        'user_phone' => $user_phone,        
+        'user_phone' => $user_phone,
     );
+
+    // Quick debug log to confirm hook firing and payload
+    if (function_exists('error_log')) {
+        error_log('NewTestCodeSnippets learndash_quiz_completed fired. Payload: ' . wp_json_encode($data));
+    }
 
     my_send_to_gsheet($data);
 }
@@ -107,22 +139,31 @@ function my_quiz_completed_handler($quiz_data, $current_user) {
 // 5. Send Data to Google Sheets
 // ==========================
 function my_send_to_gsheet($data) {
-    $url = "https://script.google.com/macros/s/AKfycbyWZ_WWGRieWywpTweI5alSYRQGskk_OmIfGGAbEU3lsU75F5Z88Ro4hNDH8wvAjFki1A/exec"; // REPLACE THIS
+    // Use a single, verified Apps Script deployment URL
+    // NOTE: update from WP Admin option `newtest_gas_url` if provided
+    $default_url = 'https://script.google.com/macros/s/AKfycbzysvZDAYwmDzjbaolDmWBNVlRrqnlYke9sTyOGeKXDDNYhTzjaknUqkBNQ7KL5Ka5C/exec';
+    $url = esc_url_raw( get_option('newtest_gas_url', $default_url) );
 
-    $args = [
-        'body'        => json_encode($data), // force raw JSON
-        'headers'     => ['Content-Type' => 'application/json; charset=utf-8'],
+    $args = array(
+        'body'        => wp_json_encode($data),
+        'headers'     => array(
+            'Content-Type' => 'application/json; charset=utf-8',
+            'Accept'       => 'application/json',
+        ),
         'method'      => 'POST',
         'data_format' => 'body',
-        'timeout'     => 20,
-    ];
+        'timeout'     => 30,
+    );
 
     $response = wp_remote_post($url, $args);
 
-    // Debug log
+    // Debug log with HTTP status and body
     if (is_wp_error($response)) {
-        error_log('GSheet error: ' . $response->get_error_message());
-    } else {
-        error_log('GSheet response: ' . wp_remote_retrieve_body($response));
+        error_log('NewTestCodeSnippets GSheet error: ' . $response->get_error_message());
+        return;
     }
+
+    $status_code = wp_remote_retrieve_response_code($response);
+    $resp_body   = wp_remote_retrieve_body($response);
+    error_log('NewTestCodeSnippets GSheet HTTP ' . $status_code . ' body: ' . $resp_body);
 }
