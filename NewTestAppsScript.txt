@@ -1,0 +1,33 @@
+function doPost(e) {
+  try {
+    // Open your sheet by ID
+    var sheet = SpreadsheetApp.openById("1Gl3-SCrbZEFkaMQimFuIuQO-ssmw9BbS8tjHzOHBGgE").getSheetByName("Sheet1");
+
+    // Parse JSON payload from WordPress
+    var data = JSON.parse(e.postData.contents);
+
+    // Append row with data
+    sheet.appendRow([
+      new Date(),          // Timestamp
+      data.quiz_id,        // Quiz ID
+      data.score,          // Raw score
+      data.percentage,     // Percentage
+      data.passed,         // Passed (true/false)
+      data.user_id,        // WP user_id (0 = anonymous)
+      data.user_name,      // Name from form
+      data.user_email,     // Email from form
+      data.user_phone      // Phone from form
+    ]);
+
+    // Success response
+    return ContentService.createTextOutput(
+      JSON.stringify({ status: 'success', received: data })
+    ).setMimeType(ContentService.MimeType.JSON);
+
+  } catch (error) {
+    // Error response
+    return ContentService.createTextOutput(
+      JSON.stringify({ status: 'error', message: error.toString() })
+    ).setMimeType(ContentService.MimeType.JSON);
+  }
+}

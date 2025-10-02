@@ -1,0 +1,128 @@
+// ==========================
+// 1. Start PHP Session
+// ==========================
+add_action('init', function() {
+    if (!session_id()) {
+        session_start();
+    }
+});
+
+// ==========================
+// 2. Shortcode for Form + Quiz
+// ==========================
+add_shortcode('quiz_with_user_info', function($atts) {
+    $atts = shortcode_atts(['quiz_id' => ''], $atts);
+
+    ob_start(); ?>
+    <form id="quiz-user-info">
+        <label>Name:</label><br>
+        <input type="text" name="user_name" required><br><br>
+
+        <label>Email:</label><br>
+        <input type="email" name="user_email" required><br><br>
+
+        <label>Phone:</label><br>
+        <input type="text" name="user_phone" required><br><br>
+
+        <button type="submit">Start Quiz</button>
+    </form>
+
+    <div id="quiz-container" style="display:none; margin-top:20px;">
+        <?php echo do_shortcode('[ld_quiz quiz_id="'.esc_attr($atts['quiz_id']).'"]'); ?>
+    </div>
+
+    <script>
+    document.getElementById("quiz-user-info").addEventListener("submit", function(e) {
+        e.preventDefault();
+
+        var form = e.target;
+        var formData = new FormData(form);
+
+        // Save via AJAX
+        fetch("<?php echo admin_url('admin-ajax.php'); ?>", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+                action: "save_quiz_user_info",
+                user_name: formData.get("user_name"),
+                user_email: formData.get("user_email"),
+                user_phone: formData.get("user_phone")
+            })
+        }).then(res => res.json()).then(() => {
+            form.style.display = "none";
+            document.getElementById("quiz-container").style.display = "block";
+        });
+    });
+    </script>
+    <?php
+    return ob_get_clean();
+});
+
+// ==========================
+// 3. AJAX Handler to Save Session Data
+// ==========================
+add_action('wp_ajax_nopriv_save_quiz_user_info', 'save_quiz_user_info');
+add_action('wp_ajax_save_quiz_user_info', 'save_quiz_user_info');
+
+function save_quiz_user_info() {
+    $_SESSION['quiz_user_name']  = sanitize_text_field($_POST['user_name']);
+    $_SESSION['quiz_user_email'] = sanitize_email($_POST['user_email']);
+    $_SESSION['quiz_user_phone'] = sanitize_text_field($_POST['user_phone']);
+    wp_send_json_success("Saved");
+}
+
+// ==========================
+// 4. Quiz Completion Hook
+// ==========================
+add_action('learndash_quiz_completed', 'my_quiz_completed_handler', 10, 2);
+
+function my_quiz_completed_handler($quiz_data, $current_user) {
+    $quiz_id    = $quiz_data['quiz']->ID;
+    $score      = $quiz_data['score'];
+    $percentage = $quiz_data['percentage'];
+    $passed     = $quiz_data['pass'];
+    $user_id    = $current_user ? $current_user->ID : 0;
+
+    // Retrieve stored info
+    $user_name  = isset($_SESSION['quiz_user_name']) ? $_SESSION['quiz_user_name'] : '';
+    $user_email = isset($_SESSION['quiz_user_email']) ? $_SESSION['quiz_user_email'] : '';
+    $user_phone = isset($_SESSION['quiz_user_phone']) ? $_SESSION['quiz_user_phone'] : '';
+
+    $data = array(
+        
+		'quiz_id'    => $quiz_id,
+        'score'      => $score,
+        'percentage' => $percentage,
+        'passed'     => $passed,
+        'user_id'    => $user_id,
+        'user_name'  => $user_name,
+        'user_email' => $user_email,
+        'user_phone' => $user_phone,        
+    );
+
+    my_send_to_gsheet($data);
+}
+
+// ==========================
+// 5. Send Data to Google Sheets
+// ==========================
+function my_send_to_gsheet($data) {
+    $url = "https://script.google.com/macros/s/AKfycbyWZ_WWGRieWywpTweI5alSYRQGskk_OmIfGGAbEU3lsU75F5Z88Ro4hNDH8wvAjFki1A/exec"; // REPLACE THIS
+
+    $args = [
+        'body'        => json_encode($data), // force raw JSON
+        'headers'     => ['Content-Type' => 'application/json; charset=utf-8'],
+        'method'      => 'POST',
+        'data_format' => 'body',
+        'timeout'     => 20,
+    ];
+
+    $response = wp_remote_post($url, $args);
+
+    // Debug log
+    if (is_wp_error($response)) {
+        error_log('GSheet error: ' . $response->get_error_message());
+    } else {
+        error_log('GSheet response: ' . wp_remote_retrieve_body($response));
+    }
+}
