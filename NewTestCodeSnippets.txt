@@ -748,6 +748,72 @@ function ld_student_quiz_shortcode($atts) {
                 return score;
             }
             
+        // Normalize different event payload shapes into a percentage [0, 100]
+        function normalizeScoreFromEvent(data) {
+            if (!data || typeof data !== 'object') {
+                return 0;
+            }
+
+            const toNumber = (v) => {
+                const n = Number(v);
+                return Number.isFinite(n) ? n : NaN;
+            };
+
+            // 1) Prefer explicit percentage-like fields
+            const percentCandidates = [
+                data.percentage,
+                data.pass_percent,
+                data.passPercent,
+                data.percent,
+                data.prozent
+            ].map(toNumber).filter((n) => Number.isFinite(n));
+
+            for (const p of percentCandidates) {
+                // Handle 0-1 fractions as well as 0-100 values
+                if (p > 0 && p <= 1) return Math.round(p * 100);
+                if (p >= 0 && p <= 100) return Math.round(p);
+            }
+
+            // 2) Try points-based fields with a max
+            const rawScore = toNumber(
+                data.score ?? data.points ?? data.user_points ?? data.earned_points
+            );
+            const maxPoints = toNumber(
+                data.max_score ?? data.maxPoints ?? data.total_points ?? data.points_total ?? data.pointsPossible ?? data.totalPoints ?? data.score_max
+            );
+
+            if (Number.isFinite(rawScore)) {
+                // If we know the maximum, compute percentage reliably
+                if (Number.isFinite(maxPoints) && maxPoints > 0) {
+                    return Math.round((rawScore / maxPoints) * 100);
+                }
+
+                // Handle normalized fractions
+                if (rawScore > 0 && rawScore <= 1) {
+                    return Math.round(rawScore * 100);
+                }
+
+                // If the score looks too large, attempt to infer from question counts
+                const totalQuestions = toNumber(
+                    data.total_questions ?? data.questionsCount ?? data.questionCount ?? data.totalQuestions
+                );
+                if (rawScore > 100 && Number.isFinite(totalQuestions) && totalQuestions > 0) {
+                    // Heuristic: many payloads use points-per-question; infer points per question
+                    const pointsPerQuestion = Math.round(rawScore / totalQuestions);
+                    if (pointsPerQuestion > 0) {
+                        return Math.round((rawScore / (totalQuestions * pointsPerQuestion)) * 100);
+                    }
+                }
+
+                // Fall back: if it's in [0,100], use it; otherwise NaN and let caller fallback
+                if (rawScore >= 0 && rawScore <= 100) {
+                    return Math.round(rawScore);
+                }
+            }
+
+            return 0;
+        }
+        
             // Handle quiz completion
             function handleQuizCompletion(data) {
                 // Prevent duplicate handling
@@ -755,29 +821,31 @@ function ld_student_quiz_shortcode($atts) {
                     debug('⚠️ Quiz completion already handled, skipping', 'info');
                     return;
                 }
-                
-                quizCompletionHandled = true;
-                
                 debug('📊 Processing quiz completion...', 'info');
                 
-                let score = 0;
-                
-                if (data && typeof data === 'object') {
-                    score = data.score || data.pass_percent || data.percentage || 0;
-                    debug('Score from event data: ' + score);
-                }
-                
-                if (score === 0) {
-                    score = extractQuizScore();
-                }
-                
-                debug('✅ Final score: ' + score + '%', 'success');
-                
-                // Validate score
-                if (score < 0 || score > 100) {
-                    debug('⚠️ Invalid score detected: ' + score + ', resetting to 0', 'error');
-                    score = 0;
-                }
+            // Try to read and normalize from event payload first
+            let score = normalizeScoreFromEvent(data);
+            debug('Score from event data (normalized): ' + score);
+
+            // If event payload didn't give a valid score, fallback to DOM extraction
+            if (!Number.isFinite(score) || score <= 0 || score > 100) {
+                debug('Event score invalid/out-of-range, will re-check DOM shortly...');
+                // Give the UI time to render results, then perform a manual check
+                setTimeout(function() {
+                    if (!quizCompletionHandled) {
+                        checkForQuizCompletion();
+                    }
+                }, 1500);
+                return; // Defer handling until DOM has results
+            }
+
+            // Final clamp to [0, 100]
+            score = Math.max(0, Math.min(100, Math.round(Number(score) || 0)));
+
+            // Mark as handled now that we have a valid score
+            quizCompletionHandled = true;
+
+            debug('✅ Final score: ' + score + '%', 'success');
                 
                 // Show loading message
                 alert('⏳ Đang lưu kết quả...', 'info');
