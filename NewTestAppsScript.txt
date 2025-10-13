@@ -1,33 +1,94 @@
 function doPost(e) {
   try {
-    // Open your sheet by ID
+    // Log request để debug
+    Logger.log('=== REQUEST RECEIVED ===');
+    Logger.log('Content Type: ' + e.postData.type);
+    Logger.log('Raw content: ' + e.postData.contents);
+    
+    // Lấy parameters
+    var params = e.parameter;
+    Logger.log('Parameters: ' + JSON.stringify(params));
+    
+    // Lấy dữ liệu từ request
+    var name = params.name || '';
+    var email = params.email || '';
+    var mobiphone = params.mobiphone || '';
+    var score = params.score || '0';
+    var quiz_id = params.quiz_id || '';
+    var timestamp = params.timestamp || '';
+    var ip = params.ip || '';
+    
+    // Validate dữ liệu
+    if (!name || !email || !mobiphone) {
+      Logger.log('Validation failed: Missing required fields');
+      return createResponse(false, 'Missing required fields: name, email, or phone');
+    }
+    
+    // Lấy spreadsheet hiện tại
+    //var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
     var sheet = SpreadsheetApp.openById("1Gl3-SCrbZEFkaMQimFuIuQO-ssmw9BbS8tjHzOHBGgE").getSheetByName("Sheet1");
-
-    // Parse JSON payload from WordPress
-    var data = JSON.parse(e.postData.contents);
-
-    // Append row with data
+    // Nếu sheet trống, thêm header
+    if (sheet.getLastRow() === 0) {
+      sheet.appendRow([
+        'Thời gian',
+        'Họ tên',
+        'Email', 
+        'Số điện thoại',
+        'Điểm số',
+        'Quiz ID',
+        'IP Address',
+        'Timestamp từ WP'
+      ]);
+      
+      // Format header
+      var headerRange = sheet.getRange(1, 1, 1, 8);
+      headerRange.setFontWeight('bold');
+      headerRange.setBackground('#4285f4');
+      headerRange.setFontColor('#ffffff');
+    }
+    
+    // Thêm dữ liệu mới
+    var currentTime = new Date();
     sheet.appendRow([
-      new Date(),          // Timestamp
-      data.quiz_id,        // Quiz ID
-      data.score,          // Raw score
-      data.percentage,     // Percentage
-      data.passed,         // Passed (true/false)
-      data.user_id,        // WP user_id (0 = anonymous)
-      data.user_name,      // Name from form
-      data.user_email,     // Email from form
-      data.user_phone      // Phone from form
+      currentTime,           // Thời gian server
+      name,                  // Họ tên
+      email,                 // Email
+      mobiphone,             // Số điện thoại
+      score,                 // Điểm số
+      quiz_id,               // Quiz ID
+      ip,                    // IP Address
+      timestamp              // Timestamp từ WordPress
     ]);
-
-    // Success response
-    return ContentService.createTextOutput(
-      JSON.stringify({ status: 'success', received: data })
-    ).setMimeType(ContentService.MimeType.JSON);
-
+    
+    // Format row vừa thêm
+    var lastRow = sheet.getLastRow();
+    var dataRange = sheet.getRange(lastRow, 1, 1, 8);
+    
+    // Alternate row colors
+    if (lastRow % 2 === 0) {
+      dataRange.setBackground('#f8f9fa');
+    }
+    
+    // Auto-resize columns
+    for (var i = 1; i <= 8; i++) {
+      sheet.autoResizeColumn(i);
+    }
+    
+    Logger.log('=== DATA SAVED SUCCESSFULLY ===');
+    Logger.log('Row: ' + lastRow);
+    
+    // Return success response
+    return createResponse(true, 'Data saved successfully', {
+      row: lastRow,
+      name: name,
+      email: email
+    });
+    
   } catch (error) {
-    // Error response
-    return ContentService.createTextOutput(
-      JSON.stringify({ status: 'error', message: error.toString() })
-    ).setMimeType(ContentService.MimeType.JSON);
+    Logger.log('=== ERROR ===');
+    Logger.log('Error message: ' + error.message);
+    Logger.log('Error stack: ' + error.stack);
+    
+    return createResponse(false, 'Server error: ' + error.message);
   }
 }
