@@ -1,128 +1,1021 @@
-// ==========================
-// 1. Start PHP Session
-// ==========================
-add_action('init', function() {
-    if (!session_id()) {
-        session_start();
-    }
-});
+/**
+ * LearnDash Quiz Form v3.0 - Completely New Implementation
+ * Shortcode: [ld_student_quiz]
+ */
 
-// ==========================
-// 2. Shortcode for Form + Quiz
-// ==========================
-add_shortcode('quiz_with_user_info', function($atts) {
-    $atts = shortcode_atts(['quiz_id' => ''], $atts);
+// === MAIN SHORTCODE ===
+function ld_student_quiz_shortcode($atts) {
+    $atts = shortcode_atts(array(
+        'quiz_id' => 2521,
+    ), $atts);
+    
+    $quiz_id = intval($atts['quiz_id']);
+    $unique_id = 'ldq_' . uniqid();
+    
+    ob_start();
+    ?>
+    <style>
+        .ld-quiz-wrapper-v3 {
+            max-width: 550px;
+            margin: 30px auto;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }
+        .ld-quiz-card {
+            background: white;
+            padding: 30px;
+            border-radius: 16px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.07), 0 1px 3px rgba(0,0,0,0.06);
+        }
+        .ld-quiz-title {
+            text-align: center;
+            font-size: 24px;
+            font-weight: 700;
+            color: #1e293b;
+            margin: 0 0 24px 0;
+        }
+        .ld-form-group {
+            margin-bottom: 20px;
+        }
+        .ld-form-label {
+            display: block;
+            font-size: 14px;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 8px;
+        }
+        .ld-form-label .required {
+            color: #ef4444;
+            margin-left: 2px;
+        }
+        .ld-form-input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e5e7eb;
+            border-radius: 10px;
+            font-size: 15px;
+            transition: all 0.2s;
+            box-sizing: border-box;
+        }
+        .ld-form-input:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+        .ld-form-input.locked {
+            background: #f9fafb;
+            color: #6b7280;
+            cursor: not-allowed;
+        }
+        .ld-submit-btn {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+            border: none;
+            border-radius: 10px;
+            color: white;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 4px 6px rgba(59, 130, 246, 0.3);
+        }
+        .ld-submit-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(59, 130, 246, 0.4);
+        }
+        .ld-submit-btn:active:not(:disabled) {
+            transform: translateY(0);
+        }
+        .ld-submit-btn:disabled {
+            background: #9ca3af;
+            cursor: not-allowed;
+            box-shadow: none;
+            transform: none;
+        }
+        .ld-alert {
+            padding: 14px 16px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            display: none;
+            animation: slideIn 0.3s ease;
+        }
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .ld-alert.error {
+            background: #fef2f2;
+            border: 2px solid #fecaca;
+            color: #dc2626;
+        }
+        .ld-alert.success {
+            background: #f0fdf4;
+            border: 2px solid #bbf7d0;
+            color: #16a34a;
+        }
+        .ld-alert.info {
+            background: #eff6ff;
+            border: 2px solid #bfdbfe;
+            color: #2563eb;
+        }
+        .ld-debug-box {
+            margin-top: 20px;
+            background: #0f172a;
+            border-radius: 12px;
+            padding: 16px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+        .ld-debug-title {
+            color: #60a5fa;
+            font-weight: bold;
+            margin-bottom: 10px;
+            font-size: 13px;
+        }
+        .ld-debug-log {
+            color: #e2e8f0;
+        }
+        .ld-debug-entry {
+            margin: 6px 0;
+            padding: 6px 10px;
+            border-radius: 4px;
+            background: rgba(255,255,255,0.03);
+        }
+        .ld-debug-entry.success {
+            background: rgba(34, 197, 94, 0.15);
+            border-left: 3px solid #22c55e;
+            color: #86efac;
+        }
+        .ld-debug-entry.error {
+            background: rgba(239, 68, 68, 0.15);
+            border-left: 3px solid #ef4444;
+            color: #fca5a5;
+        }
+        .ld-debug-entry.info {
+            border-left: 3px solid #60a5fa;
+        }
+        .ld-quiz-content {
+            margin-top: 30px;
+            display: none;
+        }
+        .ld-result {
+            display: none;
+            margin-top: 30px;
+            padding: 24px;
+            background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+            border: 2px solid #86efac;
+            border-radius: 16px;
+        }
+    </style>
 
-    ob_start(); ?>
-    <form id="quiz-user-info">
-        <label>Name:</label><br>
-        <input type="text" name="user_name" required><br><br>
+    <div class="ld-quiz-wrapper-v3" data-unique="<?php echo esc_attr($unique_id); ?>">
+        <div class="ld-quiz-card">
+            <h3 class="ld-quiz-title">📋 Thông tin học viên</h3>
+            
+            <div class="ld-alert"></div>
+            
+            <form class="ld-student-form-v3" data-quiz-id="<?php echo esc_attr($quiz_id); ?>">
+                <div class="ld-form-group">
+                    <label class="ld-form-label">
+                        Họ và tên
+                        <span class="required">*</span>
+                    </label>
+                    <input type="text" 
+                           class="ld-form-input" 
+                           name="fullname" 
+                           value="Nguyễn Văn A" 
+                           required>
+                </div>
 
-        <label>Email:</label><br>
-        <input type="email" name="user_email" required><br><br>
+                <div class="ld-form-group">
+                    <label class="ld-form-label">
+                        Email
+                        <span class="required">*</span>
+                    </label>
+                    <input type="email" 
+                           class="ld-form-input" 
+                           name="email" 
+                           value="test@example.com" 
+                           required>
+                </div>
 
-        <label>Phone:</label><br>
-        <input type="text" name="user_phone" required><br><br>
+                <div class="ld-form-group">
+                    <label class="ld-form-label">
+                        Số điện thoại
+                        <span class="required">*</span>
+                    </label>
+                    <input type="tel" 
+                           class="ld-form-input" 
+                           name="phone" 
+                           value="0938099995" 
+                           pattern="[0-9]{10,11}" 
+                           required>
+                </div>
 
-        <button type="submit">Start Quiz</button>
-    </form>
+                <button type="submit" class="ld-submit-btn">
+                    🚀 Bắt đầu làm bài kiểm tra
+                </button>
+            </form>
+            
+            <div class="ld-debug-box">
+                <div class="ld-debug-title">🔍 System Debug Console</div>
+                <div class="ld-debug-log"></div>
+            </div>
+        </div>
 
-    <div id="quiz-container" style="display:none; margin-top:20px;">
-        <?php echo do_shortcode('[ld_quiz quiz_id="'.esc_attr($atts['quiz_id']).'"]'); ?>
+        <div class="ld-quiz-content">
+            <?php echo do_shortcode('[ld_quiz quiz_id="' . $quiz_id . '"]'); ?>
+        </div>
+
+        <div class="ld-result"></div>
     </div>
 
-    <script>
-    document.getElementById("quiz-user-info").addEventListener("submit", function(e) {
-        e.preventDefault();
-
-        var form = e.target;
-        var formData = new FormData(form);
-
-        // Save via AJAX
-        fetch("<?php echo admin_url('admin-ajax.php'); ?>", {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: new URLSearchParams({
-                action: "save_quiz_user_info",
-                user_name: formData.get("user_name"),
-                user_email: formData.get("user_email"),
-                user_phone: formData.get("user_phone")
-            })
-        }).then(res => res.json()).then(() => {
-            form.style.display = "none";
-            document.getElementById("quiz-container").style.display = "block";
+    <script type="text/javascript">
+    (function() {
+        'use strict';
+        
+        // Wait for jQuery
+        if (typeof jQuery === 'undefined') {
+            console.error('jQuery is not loaded!');
+            return;
+        }
+        
+        jQuery(function($) {
+            const uniqueId = '<?php echo esc_js($unique_id); ?>';
+            const $wrapper = $('.ld-quiz-wrapper-v3[data-unique="' + uniqueId + '"]');
+            const $form = $wrapper.find('.ld-student-form-v3');
+            const $alert = $wrapper.find('.ld-alert');
+            const $debugLog = $wrapper.find('.ld-debug-log');
+            const $submitBtn = $wrapper.find('.ld-submit-btn');
+            const $quizContent = $wrapper.find('.ld-quiz-content');
+            
+            const quizId = $form.data('quiz-id');
+            const ajaxUrl = '<?php echo esc_js(admin_url('admin-ajax.php')); ?>';
+            
+            console.log('%c LD Quiz Form v3.0 Initialized ', 'background: #3b82f6; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold;');
+            
+            // Debug logger
+            function debug(msg, type = 'info') {
+                const time = new Date().toLocaleTimeString('vi-VN');
+                const icons = { info: '📝', success: '✅', error: '❌' };
+                const icon = icons[type] || '📝';
+                
+                const $entry = $('<div class="ld-debug-entry ' + type + '">' +
+                    '<span style="color:#94a3b8;">[' + time + ']</span> ' +
+                    icon + ' ' + msg +
+                    '</div>');
+                
+                $debugLog.append($entry);
+                $debugLog.parent().scrollTop($debugLog.parent()[0].scrollHeight);
+                
+                console.log('[LD Quiz v3] ' + msg);
+            }
+            
+            // Alert
+            function alert(msg, type = 'info') {
+                $alert.removeClass('error success info')
+                      .addClass(type)
+                      .html(msg)
+                      .slideDown(300);
+            }
+            
+            // Initialize
+            debug('System starting...');
+            debug('Quiz ID: ' + quizId, 'info');
+            debug('AJAX Endpoint: ' + ajaxUrl, 'info');
+            debug('Unique ID: ' + uniqueId, 'info');
+            
+            // Test connection
+            debug('Testing server connection...');
+            $.ajax({
+                url: ajaxUrl,
+                type: 'POST',
+                data: { action: 'ld_test_connection' },
+                timeout: 5000,
+                success: function(response) {
+                    if (response.success) {
+                        debug('✅ Server connection OK! Version: ' + response.data.version, 'success');
+                    } else {
+                        debug('⚠️ Server responded but with error', 'error');
+                    }
+                },
+                error: function(xhr) {
+                    debug('❌ Connection test failed! Status: ' + xhr.status, 'error');
+                    alert('⚠️ Không thể kết nối server. Vui lòng reload trang.', 'error');
+                }
+            });
+            
+            // Store student data globally
+            let studentData = {};
+            let isQuizStarted = false;
+            
+            // Form submission
+            $form.on('submit', function(e) {
+                e.preventDefault();
+                
+                debug('📤 Form submission started');
+                $alert.slideUp();
+                
+                // Store student data
+                studentData = {
+                    fullname: $form.find('[name="fullname"]').val().trim(),
+                    email: $form.find('[name="email"]').val().trim(),
+                    phone: $form.find('[name="phone"]').val().trim(),
+                    quiz_id: quizId
+                };
+                
+                const formData = {
+                    action: 'ld_save_student_v3',
+                    fullname: studentData.fullname,
+                    email: studentData.email,
+                    phone: studentData.phone,
+                    quiz_id: studentData.quiz_id,
+                    score: 0
+                };
+                
+                debug('Form data prepared: ' + JSON.stringify(formData));
+                
+                $submitBtn.prop('disabled', true).text('⏳ Đang xử lý...');
+                
+                $.ajax({
+                    url: ajaxUrl,
+                    type: 'POST',
+                    data: formData,
+                    dataType: 'json',
+                    timeout: 20000,
+                    beforeSend: function() {
+                        debug('Sending request to server...');
+                    },
+                    success: function(response) {
+                        debug('✅ Server response received', 'success');
+                        debug('Response data: ' + JSON.stringify(response));
+                        
+                        if (response.success) {
+                            debug('✅ Student data saved successfully!', 'success');
+                            alert('✅ Thông tin đã được lưu! Đang load bài kiểm tra...', 'success');
+                            
+                            // Lock inputs
+                            $form.find('.ld-form-input')
+                                 .prop('readonly', true)
+                                 .addClass('locked');
+                            
+                            $submitBtn.text('✓ Đã đăng ký thành công');
+                            isQuizStarted = true;
+                            
+                            // Show quiz
+                            debug('Displaying quiz content...');
+                            $quizContent.slideDown(500);
+                            
+                            // Start monitoring quiz completion
+                            startQuizMonitoring();
+                            
+                            // Scroll to quiz
+                            setTimeout(function() {
+                                $('html, body').animate({
+                                    scrollTop: $quizContent.offset().top - 30
+                                }, 600);
+                            }, 300);
+                            
+                        } else {
+                            const errMsg = response.data && response.data.message 
+                                ? response.data.message 
+                                : 'Unknown error';
+                            
+                            debug('❌ Server error: ' + errMsg, 'error');
+                            alert('❌ Lỗi: ' + errMsg, 'error');
+                            $submitBtn.prop('disabled', false).text('🚀 Bắt đầu làm bài kiểm tra');
+                        }
+                    },
+                    error: function(xhr, status, error) {
+                        debug('❌ AJAX request failed!', 'error');
+                        debug('Status: ' + status + ', Code: ' + xhr.status, 'error');
+                        debug('Error: ' + error, 'error');
+                        
+                        if (xhr.responseText) {
+                            debug('Response text: ' + xhr.responseText.substring(0, 200), 'error');
+                        }
+                        
+                        let errMsg = '❌ Lỗi kết nối';
+                        
+                        switch(xhr.status) {
+                            case 0:
+                                errMsg = '❌ Không thể kết nối. Kiểm tra internet.';
+                                break;
+                            case 404:
+                                errMsg = '❌ Endpoint không tồn tại (404)';
+                                break;
+                            case 500:
+                                errMsg = '❌ Lỗi server (500). Xem debug.log';
+                                break;
+                            case 403:
+                                errMsg = '❌ Bị từ chối truy cập (403)';
+                                break;
+                        }
+                        
+                        alert(errMsg, 'error');
+                        $submitBtn.prop('disabled', false).text('🚀 Bắt đầu làm bài kiểm tra');
+                    }
+                });
+            });
+            
+            // Monitor quiz completion
+            let quizCompletionHandled = false;
+            
+            function startQuizMonitoring() {
+                debug('🔍 Starting quiz completion monitoring...');
+                
+                // Method 1: Listen for LearnDash events
+                $(document).on('learndash-quiz-completed', function(event, data) {
+                    if (quizCompletionHandled) {
+                        debug('Quiz completion already handled, ignoring duplicate event');
+                        return;
+                    }
+                    debug('🎉 Quiz completed event detected (Method 1)', 'success');
+                    handleQuizCompletion(data);
+                });
+                
+                // Method 2: Monitor for quiz submit button click
+                $(document).on('click', '.wpProQuiz_button[name="check"], .ld-button[name="check"], input[name="quizFinish"]', function() {
+                    debug('📝 Quiz submit button clicked', 'info');
+                    // Wait a bit for results to load
+                    setTimeout(function() {
+                        if (!quizCompletionHandled) {
+                            checkForQuizCompletion();
+                        }
+                    }, 2000);
+                });
+                
+                // Method 3: Monitor DOM for completion message (more specific checks)
+                let checkCount = 0;
+                let consecutiveDetections = 0;
+                const maxChecks = 600; // Check for 10 minutes
+                const requiredConsecutiveDetections = 3; // Must detect 3 times in a row to confirm
+                
+                const completionInterval = setInterval(function() {
+                    checkCount++;
+                    
+                    // Stop checking after max attempts
+                    if (checkCount > maxChecks) {
+                        clearInterval(completionInterval);
+                        debug('⏰ Quiz monitoring timeout', 'info');
+                        return;
+                    }
+                    
+                    // If already handled, stop monitoring
+                    if (quizCompletionHandled) {
+                        clearInterval(completionInterval);
+                        debug('Quiz completion already handled, stopping monitoring');
+                        return;
+                    }
+                    
+                    // Check for completion with strict conditions
+                    if (isQuizReallyCompleted()) {
+                        consecutiveDetections++;
+                        debug('Quiz completion check ' + consecutiveDetections + '/' + requiredConsecutiveDetections);
+                        
+                        if (consecutiveDetections >= requiredConsecutiveDetections) {
+                            debug('🎉 Quiz completion confirmed (Method 3)!', 'success');
+                            clearInterval(completionInterval);
+                            
+                            // Try to extract score
+                            const score = extractQuizScore();
+                            debug('Extracted score: ' + score);
+                            
+                            handleQuizCompletion({ score: score });
+                        }
+                    } else {
+                        // Reset counter if not detected
+                        if (consecutiveDetections > 0) {
+                            debug('Quiz completion check reset');
+                        }
+                        consecutiveDetections = 0;
+                    }
+                }, 2000); // Check every 2 seconds (slower)
+            }
+            
+            // Check if quiz is really completed (strict validation)
+            function isQuizReallyCompleted() {
+                // Check 1: Must have results container
+                const $results = $('.wpProQuiz_results, .ld-quiz-results, .learndash-quiz-results');
+                if ($results.length === 0) {
+                    return false;
+                }
+                
+                // Check 2: Results must be visible
+                if (!$results.is(':visible')) {
+                    return false;
+                }
+                
+                // Check 3: Must have score/percentage text
+                const resultsText = $results.text().toLowerCase();
+                const hasScoreIndicators = resultsText.includes('%') || 
+                                          resultsText.includes('score') || 
+                                          resultsText.includes('điểm') ||
+                                          resultsText.includes('correct') ||
+                                          resultsText.includes('đúng');
+                
+                if (!hasScoreIndicators) {
+                    return false;
+                }
+                
+                // Check 4: Quiz form should be hidden or disabled
+                const $quizForm = $('.wpProQuiz_quiz, .ld-quiz-form');
+                const isQuizHidden = $quizForm.length === 0 || !$quizForm.is(':visible');
+                
+                // Check 5: Should have completion message
+                const hasCompletionMsg = $('.wpProQuiz_text .wpProQuiz_header, .ld-quiz-complete-text').length > 0;
+                
+                debug('Completion checks: results=' + $results.length + 
+                      ', visible=' + $results.is(':visible') + 
+                      ', hasScore=' + hasScoreIndicators + 
+                      ', quizHidden=' + isQuizHidden +
+                      ', hasMsg=' + hasCompletionMsg);
+                
+                // Must pass at least 3 checks
+                const passedChecks = [
+                    $results.length > 0,
+                    $results.is(':visible'),
+                    hasScoreIndicators,
+                    isQuizHidden || hasCompletionMsg
+                ].filter(Boolean).length;
+                
+                return passedChecks >= 3;
+            }
+            
+            // Manual check function
+            function checkForQuizCompletion() {
+                if (quizCompletionHandled) {
+                    return;
+                }
+                
+                if (isQuizReallyCompleted()) {
+                    debug('🎉 Quiz completion confirmed via manual check!', 'success');
+                    const score = extractQuizScore();
+                    debug('Extracted score: ' + score);
+                    handleQuizCompletion({ score: score });
+                }
+            }
+            
+            // Extract score from quiz result
+            function extractQuizScore() {
+                let score = 0;
+                
+                debug('🔎 Attempting to extract quiz score...');
+                
+                // Log all elements that might contain score
+                debug('=== SCANNING FOR SCORE ELEMENTS ===');
+                
+                // Method 1: Try wpProQuiz result percentage
+                const $percentage = $('.wpProQuiz_resultValue, .wpProQuiz_passPercent');
+                if ($percentage.length > 0) {
+                    $percentage.each(function(i) {
+                        debug('wpProQuiz element ' + i + ': ' + $(this).text());
+                    });
+                    const text = $percentage.first().text();
+                    const match = text.match(/(\d+(?:\.\d+)?)\s*%/);
+                    if (match) {
+                        score = parseFloat(match[1]);
+                        debug('✅ Extracted score from wpProQuiz: ' + score, 'success');
+                        return score;
+                    }
+                }
+                
+                // Method 2: Try LearnDash score elements
+                const ldSelectors = [
+                    '.ld-quiz-score',
+                    '.ld-quiz-result-score',
+                    '.ld_quiz_result_score',
+                    '.learndash_quiz_result_score',
+                    '.ld-propanel-quiz-results-percentage',
+                    '.ld_quiz_results_result_percentage'
+                ];
+                
+                for (let selector of ldSelectors) {
+                    const $elem = $(selector);
+                    if ($elem.length > 0) {
+                        $elem.each(function(i) {
+                            debug('LD element ' + selector + ' ' + i + ': ' + $(this).text());
+                        });
+                        const text = $elem.first().text();
+                        const match = text.match(/(\d+(?:\.\d+)?)/);
+                        if (match) {
+                            score = parseFloat(match[1]);
+                            debug('✅ Extracted score from ' + selector + ': ' + score, 'success');
+                            return score;
+                        }
+                    }
+                }
+                
+                // Method 3: Search in all elements with class containing "result" or "score"
+                debug('Searching in all result/score classes...');
+                $('[class*="result"], [class*="score"], [class*="Result"], [class*="Score"]').each(function() {
+                    const $this = $(this);
+                    const text = $this.text();
+                    if (text.length > 0 && text.length < 200) { // Ignore very long texts
+                        debug('Found element .' + this.className + ': ' + text.substring(0, 100));
+                        
+                        // Try to extract percentage
+                        const percentMatch = text.match(/(\d+(?:\.\d+)?)\s*%/);
+                        if (percentMatch && score === 0) {
+                            const possibleScore = parseFloat(percentMatch[1]);
+                            if (possibleScore >= 0 && possibleScore <= 100) {
+                                score = possibleScore;
+                                debug('✅ Found score with %: ' + score, 'success');
+                            }
+                        }
+                    }
+                });
+                
+                if (score > 0) {
+                    return score;
+                }
+                
+                // Method 4: Calculate from correct/total answers
+                debug('Attempting to calculate from answers...');
+                
+                // Try different correct answer indicators
+                const correctSelectors = [
+                    '.wpProQuiz_correct',
+                    '.ld-answer-correct',
+                    '.learndash-answer-correct',
+                    '.wpProQuiz_answerCorrect',
+                    'li.wpProQuiz_answerCorrect',
+                    '[class*="correct"]'
+                ];
+                
+                let $correctAnswers = $();
+                for (let selector of correctSelectors) {
+                    const $found = $(selector);
+                    if ($found.length > 0) {
+                        $correctAnswers = $found;
+                        debug('Found ' + $found.length + ' correct answers with selector: ' + selector);
+                        break;
+                    }
+                }
+                
+                // Try different question list selectors
+                const questionSelectors = [
+                    '.wpProQuiz_list',
+                    '.wpProQuiz_listItem',
+                    '.ld-question-list li',
+                    '.ld-question-item',
+                    '.learndash-question',
+                    '.wpProQuiz_question'
+                ];
+                
+                let totalQuestions = 0;
+                for (let selector of questionSelectors) {
+                    const $found = $(selector);
+                    if ($found.length > 0) {
+                        totalQuestions = $found.length;
+                        debug('Found ' + totalQuestions + ' questions with selector: ' + selector);
+                        break;
+                    }
+                }
+                
+                if (totalQuestions > 0 && $correctAnswers.length > 0) {
+                    score = Math.round(($correctAnswers.length / totalQuestions) * 100);
+                    debug('✅ Calculated score: ' + $correctAnswers.length + '/' + totalQuestions + ' = ' + score + '%', 'success');
+                    return score;
+                }
+                
+                // Method 5: Try to find statistic box
+                debug('Checking statistic elements...');
+                const $statistic = $('.wpProQuiz_catOverview, .ld_quiz_results, .ld-quiz-results-statistics');
+                if ($statistic.length > 0) {
+                    const statText = $statistic.text();
+                    debug('Statistic text: ' + statText.substring(0, 200));
+                    
+                    // Look for patterns like "10 of 10" or "10/10"
+                    const fractionMatch = statText.match(/(\d+)\s*(?:of|\/)\s*(\d+)/i);
+                    if (fractionMatch) {
+                        const correct = parseInt(fractionMatch[1]);
+                        const total = parseInt(fractionMatch[2]);
+                        score = Math.round((correct / total) * 100);
+                        debug('✅ Calculated from fraction: ' + correct + '/' + total + ' = ' + score + '%', 'success');
+                        return score;
+                    }
+                }
+                
+                // Method 6: Check for quiz result data attributes
+                debug('Checking data attributes...');
+                const $quizResults = $('.wpProQuiz_results, .ld-quiz-results, [class*="quiz-result"]');
+                if ($quizResults.length > 0) {
+                    debug('Quiz results HTML: ' + $quizResults.html().substring(0, 500));
+                    
+                    // Try data attributes
+                    const dataScore = $quizResults.data('score') || $quizResults.data('percentage') || $quizResults.data('result');
+                    if (dataScore) {
+                        score = parseFloat(dataScore);
+                        debug('✅ Found score in data attribute: ' + score, 'success');
+                        return score;
+                    }
+                }
+                
+                // Method 7: Look in the entire quiz container
+                debug('Searching entire quiz container...');
+                const $quizContainer = $('.wpProQuiz_content, .learndash-wrapper, .ld-quiz-wrapper');
+                if ($quizContainer.length > 0) {
+                    const allText = $quizContainer.text();
+                    debug('Quiz container text sample: ' + allText.substring(0, 300));
+                    
+                    // Try to find any percentage
+                    const allMatches = allText.match(/(\d+(?:\.\d+)?)\s*%/g);
+                    if (allMatches && allMatches.length > 0) {
+                        debug('Found percentages: ' + allMatches.join(', '));
+                        // Take the first valid percentage
+                        for (let match of allMatches) {
+                            const num = parseFloat(match);
+                            if (num >= 0 && num <= 100) {
+                                score = num;
+                                debug('✅ Using percentage: ' + score + '%', 'success');
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                if (score === 0) {
+                    debug('⚠️ Could not extract score, returning 0', 'error');
+                    debug('PLEASE HELP: Open console and run this command:');
+                    debug('jQuery(".wpProQuiz_results, .ld-quiz-results").html()');
+                }
+                
+                return score;
+            }
+            
+            // Handle quiz completion
+            function handleQuizCompletion(data) {
+                // Prevent duplicate handling
+                if (quizCompletionHandled) {
+                    debug('⚠️ Quiz completion already handled, skipping', 'info');
+                    return;
+                }
+                
+                quizCompletionHandled = true;
+                
+                debug('📊 Processing quiz completion...', 'info');
+                
+                let score = 0;
+                
+                if (data && typeof data === 'object') {
+                    score = data.score || data.pass_percent || data.percentage || 0;
+                    debug('Score from event data: ' + score);
+                }
+                
+                if (score === 0) {
+                    score = extractQuizScore();
+                }
+                
+                debug('✅ Final score: ' + score + '%', 'success');
+                
+                // Validate score
+                if (score < 0 || score > 100) {
+                    debug('⚠️ Invalid score detected: ' + score + ', resetting to 0', 'error');
+                    score = 0;
+                }
+                
+                // Show loading message
+                alert('⏳ Đang lưu kết quả...', 'info');
+                
+                // Update score on server
+                const updateData = {
+                    action: 'ld_save_student_v3',
+                    fullname: studentData.fullname,
+                    email: studentData.email,
+                    phone: studentData.phone,
+                    quiz_id: studentData.quiz_id,
+                    score: score
+                };
+                
+                debug('Sending score update to server...');
+                debug('Update data: ' + JSON.stringify(updateData));
+                
+                $.ajax({
+                    url: ajaxUrl,
+                    type: 'POST',
+                    data: updateData,
+                    dataType: 'json',
+                    timeout: 15000,
+                    success: function(response) {
+                        debug('✅ Score updated successfully!', 'success');
+                        debug('Server response: ' + JSON.stringify(response));
+                        
+                        alert('✅ Đã lưu kết quả thành công!', 'success');
+                        
+                        // Wait a bit before hiding quiz
+                        setTimeout(function() {
+                            // Hide quiz
+                            $quizContent.slideUp(500);
+                            
+                            // Show result
+                            displayResult(studentData, score);
+                        }, 1000);
+                    },
+                    error: function(xhr, status, error) {
+                        debug('❌ Failed to update score', 'error');
+                        debug('Error: ' + status + ' - ' + error, 'error');
+                        
+                        alert('⚠️ Lỗi khi lưu điểm. Vui lòng chụp màn hình kết quả.', 'error');
+                        
+                        // Still show result even if save failed
+                        displayResult(studentData, score);
+                    }
+                });
+            }
+            
+            // Display result
+            function displayResult(student, score) {
+                const $result = $wrapper.find('.ld-result');
+                
+                const resultHtml = `
+                    <h3 style="color: #166534; margin-top: 0;">🎉 Hoàn thành bài kiểm tra!</h3>
+                    <p><strong>Họ tên:</strong> ${escapeHtml(student.fullname)}</p>
+                    <p><strong>Email:</strong> ${escapeHtml(student.email)}</p>
+                    <p><strong>Số điện thoại:</strong> ${escapeHtml(student.phone)}</p>
+                    <p><strong>Điểm số:</strong> <span style="font-size: 24px; font-weight: bold; color: #16a34a;">${score}%</span></p>
+                    <p style="margin-top: 20px; color: #059669;">Cảm ơn bạn đã hoàn thành bài kiểm tra!</p>
+                `;
+                
+                $result.html(resultHtml).slideDown(500);
+                
+                // Scroll to result
+                setTimeout(function() {
+                    $('html, body').animate({
+                        scrollTop: $result.offset().top - 30
+                    }, 600);
+                }, 300);
+                
+                debug('✅ Result displayed to user', 'success');
+            }
+            
+            // Escape HTML
+            function escapeHtml(text) {
+                const map = {
+                    '&': '&amp;',
+                    '<': '&lt;',
+                    '>': '&gt;',
+                    '"': '&quot;',
+                    "'": '&#039;'
+                };
+                return String(text).replace(/[&<>"']/g, function(m) { return map[m]; });
+            }
+            
+            // Expose helper function globally for debugging
+            window.ldQuizDebug = {
+                extractScore: extractQuizScore,
+                checkCompletion: isQuizReallyCompleted,
+                getResultsHTML: function() {
+                    const $results = $('.wpProQuiz_results, .ld-quiz-results, [class*="result"]');
+                    console.log('Results elements found:', $results.length);
+                    $results.each(function(i) {
+                        console.log('Result ' + i + ':', this.className);
+                        console.log('HTML:', $(this).html());
+                        console.log('Text:', $(this).text());
+                        console.log('---');
+                    });
+                    return $results.length;
+                },
+                getAllScoreElements: function() {
+                    const elements = [];
+                    $('[class*="score"], [class*="result"], [class*="Score"], [class*="Result"]').each(function() {
+                        elements.push({
+                            class: this.className,
+                            text: $(this).text().substring(0, 100),
+                            html: $(this).html() ? $(this).html().substring(0, 200) : ''
+                        });
+                    });
+                    console.table(elements);
+                    return elements;
+                },
+                manualSubmit: function(score) {
+                    if (!score || score < 0 || score > 100) {
+                        console.error('Invalid score. Usage: ldQuizDebug.manualSubmit(85)');
+                        return;
+                    }
+                    console.log('Manually submitting score:', score);
+                    handleQuizCompletion({ score: score });
+                }
+            };
+            
+            console.log('%c LD Quiz Debug Helper Loaded ', 'background: #16a34a; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold;');
+            console.log('Available commands:');
+            console.log('  ldQuizDebug.extractScore() - Try to extract score');
+            console.log('  ldQuizDebug.getResultsHTML() - Show all results elements');
+            console.log('  ldQuizDebug.getAllScoreElements() - Show all score-related elements');
+            console.log('  ldQuizDebug.manualSubmit(100) - Manually submit a score');
         });
-    });
+    })();
     </script>
     <?php
     return ob_get_clean();
-});
+}
+add_shortcode('ld_student_quiz', 'ld_student_quiz_shortcode');
 
-// ==========================
-// 3. AJAX Handler to Save Session Data
-// ==========================
-add_action('wp_ajax_nopriv_save_quiz_user_info', 'save_quiz_user_info');
-add_action('wp_ajax_save_quiz_user_info', 'save_quiz_user_info');
 
-function save_quiz_user_info() {
-    $_SESSION['quiz_user_name']  = sanitize_text_field($_POST['user_name']);
-    $_SESSION['quiz_user_email'] = sanitize_email($_POST['user_email']);
-    $_SESSION['quiz_user_phone'] = sanitize_text_field($_POST['user_phone']);
-    wp_send_json_success("Saved");
+// === AJAX HANDLERS ===
+
+// Test connection
+add_action('wp_ajax_ld_test_connection', 'ld_test_connection_handler');
+add_action('wp_ajax_nopriv_ld_test_connection', 'ld_test_connection_handler');
+
+function ld_test_connection_handler() {
+    wp_send_json_success(array(
+        'message' => 'Connection successful',
+        'version' => '3.0',
+        'time' => current_time('mysql')
+    ));
 }
 
-// ==========================
-// 4. Quiz Completion Hook
-// ==========================
-add_action('learndash_quiz_completed', 'my_quiz_completed_handler', 10, 2);
+// Save student
+add_action('wp_ajax_ld_save_student_v3', 'ld_save_student_v3_handler');
+add_action('wp_ajax_nopriv_ld_save_student_v3', 'ld_save_student_v3_handler');
 
-function my_quiz_completed_handler($quiz_data, $current_user) {
-    $quiz_id    = $quiz_data['quiz']->ID;
-    $score      = $quiz_data['score'];
-    $percentage = $quiz_data['percentage'];
-    $passed     = $quiz_data['pass'];
-    $user_id    = $current_user ? $current_user->ID : 0;
-
-    // Retrieve stored info
-    $user_name  = isset($_SESSION['quiz_user_name']) ? $_SESSION['quiz_user_name'] : '';
-    $user_email = isset($_SESSION['quiz_user_email']) ? $_SESSION['quiz_user_email'] : '';
-    $user_phone = isset($_SESSION['quiz_user_phone']) ? $_SESSION['quiz_user_phone'] : '';
-
-    $data = array(
+function ld_save_student_v3_handler() {
+    error_log('=== LD QUIZ V3 SAVE START ===');
+    error_log('POST data: ' . print_r($_POST, true));
+    
+    try {
+        // Get data
+        $fullname = isset($_POST['fullname']) ? sanitize_text_field($_POST['fullname']) : '';
+        $email = isset($_POST['email']) ? sanitize_email($_POST['email']) : '';
+        $phone = isset($_POST['phone']) ? sanitize_text_field($_POST['phone']) : '';
+        $quiz_id = isset($_POST['quiz_id']) ? intval($_POST['quiz_id']) : 0;
+        $score = isset($_POST['score']) ? sanitize_text_field($_POST['score']) : '0';
         
-		'quiz_id'    => $quiz_id,
-        'score'      => $score,
-        'percentage' => $percentage,
-        'passed'     => $passed,
-        'user_id'    => $user_id,
-        'user_name'  => $user_name,
-        'user_email' => $user_email,
-        'user_phone' => $user_phone,        
-    );
-
-    my_send_to_gsheet($data);
-}
-
-// ==========================
-// 5. Send Data to Google Sheets
-// ==========================
-function my_send_to_gsheet($data) {
-    $url = "https://script.google.com/macros/s/AKfycbyWZ_WWGRieWywpTweI5alSYRQGskk_OmIfGGAbEU3lsU75F5Z88Ro4hNDH8wvAjFki1A/exec"; // REPLACE THIS
-
-    $args = [
-        'body'        => json_encode($data), // force raw JSON
-        'headers'     => ['Content-Type' => 'application/json; charset=utf-8'],
-        'method'      => 'POST',
-        'data_format' => 'body',
-        'timeout'     => 20,
-    ];
-
-    $response = wp_remote_post($url, $args);
-
-    // Debug log
-    if (is_wp_error($response)) {
-        error_log('GSheet error: ' . $response->get_error_message());
-    } else {
-        error_log('GSheet response: ' . wp_remote_retrieve_body($response));
+        error_log("Parsed: name=$fullname, email=$email, phone=$phone, quiz=$quiz_id, score=$score");
+        
+        // Validate
+        if (empty($fullname) || empty($email) || empty($phone)) {
+            error_log('Validation failed: missing fields');
+            wp_send_json_error(array(
+                'message' => 'Vui lòng điền đầy đủ thông tin'
+            ));
+        }
+        
+        // Google Sheets URL
+        $sheets_url = "https://script.google.com/macros/s/AKfycbyWZ_WWGRieWywpTweI5alSYRQGskk_OmIfGGAbEU3lsU75F5Z88Ro4hNDH8wvAjFki1A/exec";
+        
+        error_log('Sending to Google Sheets: ' . $sheets_url);
+        
+        $post_data = array(
+            'name' => $fullname,
+            'email' => $email,
+            'mobiphone' => $phone,
+            'quiz_id' => $quiz_id,
+            'score' => $score,
+            'timestamp' => current_time('mysql'),
+            'ip' => $_SERVER['REMOTE_ADDR']
+        );
+        
+        error_log('Payload: ' . print_r($post_data, true));
+        
+        $response = wp_remote_post($sheets_url, array(
+            'timeout' => 20,
+            'body' => $post_data
+        ));
+        
+        if (is_wp_error($response)) {
+            $error = $response->get_error_message();
+            error_log('Google Sheets error: ' . $error);
+            wp_send_json_error(array(
+                'message' => 'Lỗi kết nối Google Sheets: ' . $error
+            ));
+        }
+        
+        $http_code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        
+        error_log('Google Sheets HTTP code: ' . $http_code);
+        error_log('Google Sheets response: ' . substr($body, 0, 500));
+        
+        if ($http_code !== 200) {
+            error_log('Google Sheets HTTP error');
+            wp_send_json_error(array(
+                'message' => 'Google Sheets HTTP error: ' . $http_code
+            ));
+        }
+        
+        error_log('=== LD QUIZ V3 SAVE SUCCESS ===');
+        
+        wp_send_json_success(array(
+            'message' => 'Saved successfully',
+            'student' => array(
+                'name' => $fullname,
+                'email' => $email,
+                'phone' => $phone
+            )
+        ));
+        
+    } catch (Exception $e) {
+        error_log('Exception: ' . $e->getMessage());
+        error_log($e->getTraceAsString());
+        wp_send_json_error(array(
+            'message' => 'Exception: ' . $e->getMessage()
+        ));
     }
 }
