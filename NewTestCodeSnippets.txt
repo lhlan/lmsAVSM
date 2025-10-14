@@ -601,11 +601,28 @@ function ld_student_quiz_shortcode($atts) {
                             debug('LD element ' + selector + ' ' + i + ': ' + $(this).text());
                         });
                         const text = $elem.first().text();
+                        // Prefer explicit percentages in the text
+                        const percentMatch = text.match(/(\d+(?:\.\d+)?)\s*%/);
+                        if (percentMatch) {
+                            const possibleScore = parseFloat(percentMatch[1]);
+                            if (possibleScore >= 0 && possibleScore <= 100) {
+                                score = possibleScore;
+                                debug('✅ Extracted percentage from ' + selector + ': ' + score, 'success');
+                                return score;
+                            }
+                        }
+
+                        // Otherwise, only accept plain numbers that are reasonable percentages
                         const match = text.match(/(\d+(?:\.\d+)?)/);
                         if (match) {
-                            score = parseFloat(match[1]);
-                            debug('✅ Extracted score from ' + selector + ': ' + score, 'success');
-                            return score;
+                            const possible = parseFloat(match[1]);
+                            if (possible >= 0 && possible <= 100) {
+                                score = possible;
+                                debug('✅ Extracted score from ' + selector + ': ' + score, 'success');
+                                return score;
+                            } else {
+                                debug('Ignoring oversized value in ' + selector + ': ' + possible);
+                            }
                         }
                     }
                 }
@@ -709,10 +726,21 @@ function ld_student_quiz_shortcode($atts) {
                     
                     // Try data attributes
                     const dataScore = $quizResults.data('score') || $quizResults.data('percentage') || $quizResults.data('result');
-                    if (dataScore) {
-                        score = parseFloat(dataScore);
-                        debug('✅ Found score in data attribute: ' + score, 'success');
-                        return score;
+                    if (dataScore !== undefined && dataScore !== null && dataScore !== '') {
+                        const num = parseFloat(dataScore);
+                        if (Number.isFinite(num)) {
+                            if (num > 0 && num <= 1) {
+                                score = Math.round(num * 100);
+                                debug('✅ Found fractional score in data attribute: ' + score, 'success');
+                                return score;
+                            }
+                            if (num >= 0 && num <= 100) {
+                                score = Math.round(num);
+                                debug('✅ Found score in data attribute: ' + score, 'success');
+                                return score;
+                            }
+                            debug('Ignoring oversized data attribute score: ' + num);
+                        }
                     }
                 }
                 
@@ -755,8 +783,25 @@ function ld_student_quiz_shortcode($atts) {
             }
 
             const toNumber = (v) => {
-                const n = Number(v);
-                return Number.isFinite(n) ? n : NaN;
+                if (v === null || v === undefined) return NaN;
+                if (typeof v === 'number') return Number.isFinite(v) ? v : NaN;
+                const str = String(v).trim();
+                if (!str) return NaN;
+                // Handle fraction forms like "400/500"
+                const frac = str.match(/^(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)/);
+                if (frac) {
+                    const num = parseFloat(frac[1]);
+                    const den = parseFloat(frac[2]);
+                    if (Number.isFinite(num) && Number.isFinite(den) && den > 0) {
+                        return (num / den) * 100; // return as percentage
+                    }
+                }
+                // Extract first numeric token, ignoring trailing symbols like % or words
+                const numeric = str.match(/(\d+(?:\.\d+)?)/);
+                if (numeric) {
+                    return parseFloat(numeric[1]);
+                }
+                return NaN;
             };
 
             // 1) Prefer explicit percentage-like fields
