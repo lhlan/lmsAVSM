@@ -1057,6 +1057,74 @@ function ld_test_connection_handler() {
 add_action('wp_ajax_ld_save_student_v3', 'ld_save_student_v3_handler');
 add_action('wp_ajax_nopriv_ld_save_student_v3', 'ld_save_student_v3_handler');
 
+// Determine if a Google Apps Script response indicates success
+function ld_is_gas_success($body) {
+    if (empty($body)) {
+        return false;
+    }
+    $json = json_decode($body, true);
+    if (is_array($json)) {
+        if ((isset($json['success']) && $json['success'] === true) ||
+            (isset($json['status']) && in_array(strtolower($json['status']), array('success','ok','200'), true)) ||
+            (isset($json['result']) && in_array(strtolower($json['result']), array('success','ok'), true)) ||
+            (isset($json['message']) && preg_match('/success|đã\s*lưu|saved/i', $json['message']))) {
+            return true;
+        }
+    }
+    return (bool) preg_match('/\b(success|ok|done|saved)\b/i', (string) $body);
+}
+
+// Robustly send data to Google Sheets (tries multiple formats)
+function ld_send_to_google_sheets($url, $post_data) {
+    // 1) application/x-www-form-urlencoded POST
+    $response = wp_remote_post($url, array(
+        'timeout' => 20,
+        'headers' => array('Content-Type' => 'application/x-www-form-urlencoded; charset=utf-8'),
+        'body'    => $post_data,
+    ));
+    if (!is_wp_error($response)) {
+        $code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        if ($code === 200 && ld_is_gas_success($body)) {
+            return array('ok' => true, 'method' => 'post-urlencoded', 'code' => $code, 'body' => $body);
+        }
+    }
+
+    // 2) JSON POST
+    $response = wp_remote_post($url, array(
+        'timeout' => 20,
+        'headers' => array('Content-Type' => 'application/json; charset=utf-8'),
+        'body'    => wp_json_encode($post_data),
+    ));
+    if (!is_wp_error($response)) {
+        $code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        if ($code === 200 && ld_is_gas_success($body)) {
+            return array('ok' => true, 'method' => 'post-json', 'code' => $code, 'body' => $body);
+        }
+    }
+
+    // 3) GET fallback (many GAS scripts accept this)
+    $get_url = add_query_arg(array_map('rawurlencode', $post_data), $url);
+    $response = wp_remote_get($get_url, array('timeout' => 20));
+    if (!is_wp_error($response)) {
+        $code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        if ($code === 200 && ld_is_gas_success($body)) {
+            return array('ok' => true, 'method' => 'get', 'code' => $code, 'body' => $body);
+        }
+    }
+
+    if (is_wp_error($response)) {
+        return array('ok' => false, 'error' => $response->get_error_message());
+    }
+    return array(
+        'ok' => false,
+        'code' => wp_remote_retrieve_response_code($response),
+        'body' => wp_remote_retrieve_body($response)
+    );
+}
+
 function ld_save_student_v3_handler() {
     error_log('=== LD QUIZ V3 SAVE START ===');
     error_log('POST data: ' . print_r($_POST, true));
@@ -1091,41 +1159,30 @@ function ld_save_student_v3_handler() {
             'quiz_id' => $quiz_id,
             'score' => $score,
             'timestamp' => current_time('mysql'),
-            'ip' => $_SERVER['REMOTE_ADDR']
+            'ip' => isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : ''
         );
         
         error_log('Payload: ' . print_r($post_data, true));
         
-        $response = wp_remote_post($sheets_url, array(
-            'timeout' => 20,
-            'body' => $post_data
-        ));
-        
-        if (is_wp_error($response)) {
-            $error = $response->get_error_message();
-            error_log('Google Sheets error: ' . $error);
+        $gs_result = ld_send_to_google_sheets($sheets_url, $post_data);
+        if (!$gs_result['ok']) {
+            error_log('Google Sheets delivery failed: ' . print_r($gs_result, true));
             wp_send_json_error(array(
-                'message' => 'Lỗi kết nối Google Sheets: ' . $error
+                'message' => 'Không thể ghi Google Sheets',
+                'detail' => isset($gs_result['error']) ? $gs_result['error'] : (isset($gs_result['body']) ? substr($gs_result['body'], 0, 200) : 'unknown'),
             ));
         }
-        
-        $http_code = wp_remote_retrieve_response_code($response);
-        $body = wp_remote_retrieve_body($response);
-        
-        error_log('Google Sheets HTTP code: ' . $http_code);
-        error_log('Google Sheets response: ' . substr($body, 0, 500));
-        
-        if ($http_code !== 200) {
-            error_log('Google Sheets HTTP error');
-            wp_send_json_error(array(
-                'message' => 'Google Sheets HTTP error: ' . $http_code
-            ));
-        }
+        error_log('Google Sheets write OK via ' . $gs_result['method'] . ' (code ' . $gs_result['code'] . ')');
+        error_log('Google Sheets response: ' . substr($gs_result['body'], 0, 500));
         
         error_log('=== LD QUIZ V3 SAVE SUCCESS ===');
         
         wp_send_json_success(array(
             'message' => 'Saved successfully',
+            'google_sheets' => array(
+                'method' => $gs_result['method'],
+                'code' => $gs_result['code']
+            ),
             'student' => array(
                 'name' => $fullname,
                 'email' => $email,
