@@ -867,6 +867,15 @@ function ld_student_quiz_shortcode($atts) {
                     return;
                 }
                 debug('📊 Processing quiz completion...', 'info');
+                try {
+                    const keys = data && typeof data === 'object' ? Object.keys(data) : [];
+                    debug('Event payload keys: ' + (keys.length ? keys.join(', ') : '(none)'));
+                    debug('Event payload (sample): ' + (function(){
+                        try { return JSON.stringify(data).substring(0, 400); } catch(e) { return '[unserializable]'; }
+                    })());
+                } catch (e) {
+                    // Only for diagnostics; safe to ignore serialization errors
+                }
                 
             // Try to read and normalize from event payload first
             let score = normalizeScoreFromEvent(data);
