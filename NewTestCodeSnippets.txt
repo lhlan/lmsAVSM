@@ -601,11 +601,28 @@ function ld_student_quiz_shortcode($atts) {
                             debug('LD element ' + selector + ' ' + i + ': ' + $(this).text());
                         });
                         const text = $elem.first().text();
+                        // Prefer explicit percentages in the text
+                        const percentMatch = text.match(/(\d+(?:\.\d+)?)\s*%/);
+                        if (percentMatch) {
+                            const possibleScore = parseFloat(percentMatch[1]);
+                            if (possibleScore >= 0 && possibleScore <= 100) {
+                                score = possibleScore;
+                                debug('✅ Extracted percentage from ' + selector + ': ' + score, 'success');
+                                return score;
+                            }
+                        }
+
+                        // Otherwise, only accept plain numbers that are reasonable percentages
                         const match = text.match(/(\d+(?:\.\d+)?)/);
                         if (match) {
-                            score = parseFloat(match[1]);
-                            debug('✅ Extracted score from ' + selector + ': ' + score, 'success');
-                            return score;
+                            const possible = parseFloat(match[1]);
+                            if (possible >= 0 && possible <= 100) {
+                                score = possible;
+                                debug('✅ Extracted score from ' + selector + ': ' + score, 'success');
+                                return score;
+                            } else {
+                                debug('Ignoring oversized value in ' + selector + ': ' + possible);
+                            }
                         }
                     }
                 }
@@ -709,10 +726,21 @@ function ld_student_quiz_shortcode($atts) {
                     
                     // Try data attributes
                     const dataScore = $quizResults.data('score') || $quizResults.data('percentage') || $quizResults.data('result');
-                    if (dataScore) {
-                        score = parseFloat(dataScore);
-                        debug('✅ Found score in data attribute: ' + score, 'success');
-                        return score;
+                    if (dataScore !== undefined && dataScore !== null && dataScore !== '') {
+                        const num = parseFloat(dataScore);
+                        if (Number.isFinite(num)) {
+                            if (num > 0 && num <= 1) {
+                                score = Math.round(num * 100);
+                                debug('✅ Found fractional score in data attribute: ' + score, 'success');
+                                return score;
+                            }
+                            if (num >= 0 && num <= 100) {
+                                score = Math.round(num);
+                                debug('✅ Found score in data attribute: ' + score, 'success');
+                                return score;
+                            }
+                            debug('Ignoring oversized data attribute score: ' + num);
+                        }
                     }
                 }
                 
@@ -748,6 +776,89 @@ function ld_student_quiz_shortcode($atts) {
                 return score;
             }
             
+        // Normalize different event payload shapes into a percentage [0, 100]
+        function normalizeScoreFromEvent(data) {
+            if (!data || typeof data !== 'object') {
+                return 0;
+            }
+
+            const toNumber = (v) => {
+                if (v === null || v === undefined) return NaN;
+                if (typeof v === 'number') return Number.isFinite(v) ? v : NaN;
+                const str = String(v).trim();
+                if (!str) return NaN;
+                // Handle fraction forms like "400/500"
+                const frac = str.match(/^(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)/);
+                if (frac) {
+                    const num = parseFloat(frac[1]);
+                    const den = parseFloat(frac[2]);
+                    if (Number.isFinite(num) && Number.isFinite(den) && den > 0) {
+                        return (num / den) * 100; // return as percentage
+                    }
+                }
+                // Extract first numeric token, ignoring trailing symbols like % or words
+                const numeric = str.match(/(\d+(?:\.\d+)?)/);
+                if (numeric) {
+                    return parseFloat(numeric[1]);
+                }
+                return NaN;
+            };
+
+            // 1) Prefer explicit percentage-like fields
+            const percentCandidates = [
+                data.percentage,
+                data.pass_percent,
+                data.passPercent,
+                data.percent,
+                data.prozent
+            ].map(toNumber).filter((n) => Number.isFinite(n));
+
+            for (const p of percentCandidates) {
+                // Handle 0-1 fractions as well as 0-100 values
+                if (p > 0 && p <= 1) return Math.round(p * 100);
+                if (p >= 0 && p <= 100) return Math.round(p);
+            }
+
+            // 2) Try points-based fields with a max
+            const rawScore = toNumber(
+                data.score ?? data.points ?? data.user_points ?? data.earned_points
+            );
+            const maxPoints = toNumber(
+                data.max_score ?? data.maxPoints ?? data.total_points ?? data.points_total ?? data.pointsPossible ?? data.totalPoints ?? data.score_max
+            );
+
+            if (Number.isFinite(rawScore)) {
+                // If we know the maximum, compute percentage reliably
+                if (Number.isFinite(maxPoints) && maxPoints > 0) {
+                    return Math.round((rawScore / maxPoints) * 100);
+                }
+
+                // Handle normalized fractions
+                if (rawScore > 0 && rawScore <= 1) {
+                    return Math.round(rawScore * 100);
+                }
+
+                // If the score looks too large, attempt to infer from question counts
+                const totalQuestions = toNumber(
+                    data.total_questions ?? data.questionsCount ?? data.questionCount ?? data.totalQuestions
+                );
+                if (rawScore > 100 && Number.isFinite(totalQuestions) && totalQuestions > 0) {
+                    // Heuristic: many payloads use points-per-question; infer points per question
+                    const pointsPerQuestion = Math.round(rawScore / totalQuestions);
+                    if (pointsPerQuestion > 0) {
+                        return Math.round((rawScore / (totalQuestions * pointsPerQuestion)) * 100);
+                    }
+                }
+
+                // Fall back: if it's in [0,100], use it; otherwise NaN and let caller fallback
+                if (rawScore >= 0 && rawScore <= 100) {
+                    return Math.round(rawScore);
+                }
+            }
+
+            return 0;
+        }
+        
             // Handle quiz completion
             function handleQuizCompletion(data) {
                 // Prevent duplicate handling
@@ -755,29 +866,40 @@ function ld_student_quiz_shortcode($atts) {
                     debug('⚠️ Quiz completion already handled, skipping', 'info');
                     return;
                 }
-                
-                quizCompletionHandled = true;
-                
                 debug('📊 Processing quiz completion...', 'info');
-                
-                let score = 0;
-                
-                if (data && typeof data === 'object') {
-                    score = data.score || data.pass_percent || data.percentage || 0;
-                    debug('Score from event data: ' + score);
+                try {
+                    const keys = data && typeof data === 'object' ? Object.keys(data) : [];
+                    debug('Event payload keys: ' + (keys.length ? keys.join(', ') : '(none)'));
+                    debug('Event payload (sample): ' + (function(){
+                        try { return JSON.stringify(data).substring(0, 400); } catch(e) { return '[unserializable]'; }
+                    })());
+                } catch (e) {
+                    // Only for diagnostics; safe to ignore serialization errors
                 }
                 
-                if (score === 0) {
-                    score = extractQuizScore();
-                }
-                
-                debug('✅ Final score: ' + score + '%', 'success');
-                
-                // Validate score
-                if (score < 0 || score > 100) {
-                    debug('⚠️ Invalid score detected: ' + score + ', resetting to 0', 'error');
-                    score = 0;
-                }
+            // Try to read and normalize from event payload first
+            let score = normalizeScoreFromEvent(data);
+            debug('Score from event data (normalized): ' + score);
+
+            // If event payload didn't give a valid score, fallback to DOM extraction
+            if (!Number.isFinite(score) || score <= 0 || score > 100) {
+                debug('Event score invalid/out-of-range, will re-check DOM shortly...');
+                // Give the UI time to render results, then perform a manual check
+                setTimeout(function() {
+                    if (!quizCompletionHandled) {
+                        checkForQuizCompletion();
+                    }
+                }, 1500);
+                return; // Defer handling until DOM has results
+            }
+
+            // Final clamp to [0, 100]
+            score = Math.max(0, Math.min(100, Math.round(Number(score) || 0)));
+
+            // Mark as handled now that we have a valid score
+            quizCompletionHandled = true;
+
+            debug('✅ Final score: ' + score + '%', 'success');
                 
                 // Show loading message
                 alert('⏳ Đang lưu kết quả...', 'info');
@@ -935,6 +1057,74 @@ function ld_test_connection_handler() {
 add_action('wp_ajax_ld_save_student_v3', 'ld_save_student_v3_handler');
 add_action('wp_ajax_nopriv_ld_save_student_v3', 'ld_save_student_v3_handler');
 
+// Determine if a Google Apps Script response indicates success
+function ld_is_gas_success($body) {
+    if (empty($body)) {
+        return false;
+    }
+    $json = json_decode($body, true);
+    if (is_array($json)) {
+        if ((isset($json['success']) && $json['success'] === true) ||
+            (isset($json['status']) && in_array(strtolower($json['status']), array('success','ok','200'), true)) ||
+            (isset($json['result']) && in_array(strtolower($json['result']), array('success','ok'), true)) ||
+            (isset($json['message']) && preg_match('/success|đã\s*lưu|saved/i', $json['message']))) {
+            return true;
+        }
+    }
+    return (bool) preg_match('/\b(success|ok|done|saved)\b/i', (string) $body);
+}
+
+// Robustly send data to Google Sheets (tries multiple formats)
+function ld_send_to_google_sheets($url, $post_data) {
+    // 1) application/x-www-form-urlencoded POST
+    $response = wp_remote_post($url, array(
+        'timeout' => 20,
+        'headers' => array('Content-Type' => 'application/x-www-form-urlencoded; charset=utf-8'),
+        'body'    => $post_data,
+    ));
+    if (!is_wp_error($response)) {
+        $code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        if ($code === 200 && ld_is_gas_success($body)) {
+            return array('ok' => true, 'method' => 'post-urlencoded', 'code' => $code, 'body' => $body);
+        }
+    }
+
+    // 2) JSON POST
+    $response = wp_remote_post($url, array(
+        'timeout' => 20,
+        'headers' => array('Content-Type' => 'application/json; charset=utf-8'),
+        'body'    => wp_json_encode($post_data),
+    ));
+    if (!is_wp_error($response)) {
+        $code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        if ($code === 200 && ld_is_gas_success($body)) {
+            return array('ok' => true, 'method' => 'post-json', 'code' => $code, 'body' => $body);
+        }
+    }
+
+    // 3) GET fallback (many GAS scripts accept this)
+    $get_url = add_query_arg(array_map('rawurlencode', $post_data), $url);
+    $response = wp_remote_get($get_url, array('timeout' => 20));
+    if (!is_wp_error($response)) {
+        $code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        if ($code === 200 && ld_is_gas_success($body)) {
+            return array('ok' => true, 'method' => 'get', 'code' => $code, 'body' => $body);
+        }
+    }
+
+    if (is_wp_error($response)) {
+        return array('ok' => false, 'error' => $response->get_error_message());
+    }
+    return array(
+        'ok' => false,
+        'code' => wp_remote_retrieve_response_code($response),
+        'body' => wp_remote_retrieve_body($response)
+    );
+}
+
 function ld_save_student_v3_handler() {
     error_log('=== LD QUIZ V3 SAVE START ===');
     error_log('POST data: ' . print_r($_POST, true));
@@ -969,41 +1159,30 @@ function ld_save_student_v3_handler() {
             'quiz_id' => $quiz_id,
             'score' => $score,
             'timestamp' => current_time('mysql'),
-            'ip' => $_SERVER['REMOTE_ADDR']
+            'ip' => isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : ''
         );
         
         error_log('Payload: ' . print_r($post_data, true));
         
-        $response = wp_remote_post($sheets_url, array(
-            'timeout' => 20,
-            'body' => $post_data
-        ));
-        
-        if (is_wp_error($response)) {
-            $error = $response->get_error_message();
-            error_log('Google Sheets error: ' . $error);
+        $gs_result = ld_send_to_google_sheets($sheets_url, $post_data);
+        if (!$gs_result['ok']) {
+            error_log('Google Sheets delivery failed: ' . print_r($gs_result, true));
             wp_send_json_error(array(
-                'message' => 'Lỗi kết nối Google Sheets: ' . $error
+                'message' => 'Không thể ghi Google Sheets',
+                'detail' => isset($gs_result['error']) ? $gs_result['error'] : (isset($gs_result['body']) ? substr($gs_result['body'], 0, 200) : 'unknown'),
             ));
         }
-        
-        $http_code = wp_remote_retrieve_response_code($response);
-        $body = wp_remote_retrieve_body($response);
-        
-        error_log('Google Sheets HTTP code: ' . $http_code);
-        error_log('Google Sheets response: ' . substr($body, 0, 500));
-        
-        if ($http_code !== 200) {
-            error_log('Google Sheets HTTP error');
-            wp_send_json_error(array(
-                'message' => 'Google Sheets HTTP error: ' . $http_code
-            ));
-        }
+        error_log('Google Sheets write OK via ' . $gs_result['method'] . ' (code ' . $gs_result['code'] . ')');
+        error_log('Google Sheets response: ' . substr($gs_result['body'], 0, 500));
         
         error_log('=== LD QUIZ V3 SAVE SUCCESS ===');
         
         wp_send_json_success(array(
             'message' => 'Saved successfully',
+            'google_sheets' => array(
+                'method' => $gs_result['method'],
+                'code' => $gs_result['code']
+            ),
             'student' => array(
                 'name' => $fullname,
                 'email' => $email,
